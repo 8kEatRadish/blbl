@@ -6,17 +6,20 @@ import androidx.core.view.isVisible
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import blbl.cat3399.core.model.VideoTag
 import blbl.cat3399.core.image.ImageLoader
 import blbl.cat3399.core.image.ImageUrl
 import blbl.cat3399.core.model.VideoCard
 import blbl.cat3399.core.ui.cloneInUserScale
 import blbl.cat3399.databinding.ItemVideoDetailHeaderBinding
+import com.google.android.material.chip.Chip
 import java.lang.ref.WeakReference
 
 class VideoDetailHeaderAdapter(
     private val onPlayClick: () -> Unit,
     private val onUpClick: () -> Unit,
     private val onTabClick: (tabName: String) -> Unit,
+    private val onTagClick: (tag: VideoTag) -> Unit,
     private val onLikeClick: () -> Unit,
     private val onCoinClick: () -> Unit,
     private val onFavClick: () -> Unit,
@@ -39,6 +42,7 @@ class VideoDetailHeaderAdapter(
     private var upName: String? = null
     private var upAvatar: String? = null
     private var tabName: String? = null
+    private var tags: List<VideoTag> = emptyList()
 
     private var primaryButtonText: String? = null
     private var secondaryButtonText: String? = null
@@ -87,6 +91,7 @@ class VideoDetailHeaderAdapter(
         upName: String?,
         upAvatar: String?,
         tabName: String?,
+        tags: List<VideoTag>,
         primaryButtonText: String?,
         secondaryButtonText: String?,
         showActions: Boolean,
@@ -112,6 +117,7 @@ class VideoDetailHeaderAdapter(
         this.upName = upName
         this.upAvatar = upAvatar
         this.tabName = tabName
+        this.tags = tags
 
         this.primaryButtonText = primaryButtonText
         this.secondaryButtonText = secondaryButtonText
@@ -147,6 +153,7 @@ class VideoDetailHeaderAdapter(
             onPlayClick = onPlayClick,
             onUpClick = onUpClick,
             onTabClick = onTabClick,
+            onTagClick = onTagClick,
             onLikeClick = onLikeClick,
             onCoinClick = onCoinClick,
             onFavClick = onFavClick,
@@ -171,6 +178,7 @@ class VideoDetailHeaderAdapter(
             upName = upName,
             upAvatar = upAvatar,
             tabName = tabName,
+            tags = tags,
             primaryButtonText = primaryButtonText,
             secondaryButtonText = secondaryButtonText,
             showActions = showActions,
@@ -206,6 +214,7 @@ class VideoDetailHeaderAdapter(
         private val onPlayClick: () -> Unit,
         private val onUpClick: () -> Unit,
         private val onTabClick: (tabName: String) -> Unit,
+        private val onTagClick: (tag: VideoTag) -> Unit,
         private val onLikeClick: () -> Unit,
         private val onCoinClick: () -> Unit,
         private val onFavClick: () -> Unit,
@@ -220,6 +229,7 @@ class VideoDetailHeaderAdapter(
     ) : RecyclerView.ViewHolder(binding.root) {
         private var partsSelectedKey: String? = null
         private var seasonSelectedKey: String? = null
+        private var lastTagsKey: String? = null
 
         private val partsAdapter =
             VideoCardAdapter(
@@ -290,6 +300,7 @@ class VideoDetailHeaderAdapter(
             upName: String?,
             upAvatar: String?,
             tabName: String?,
+            tags: List<VideoTag>,
             primaryButtonText: String?,
             secondaryButtonText: String?,
             showActions: Boolean,
@@ -341,6 +352,8 @@ class VideoDetailHeaderAdapter(
 
             val safeDesc = desc?.trim().takeIf { !it.isNullOrBlank() }
             binding.tvDesc.text = safeDesc ?: "暂无简介"
+
+            bindTags(tags)
 
             val safeTab = tabName?.trim().takeIf { !it.isNullOrBlank() }
             binding.cardTab.isVisible = safeTab != null
@@ -436,6 +449,31 @@ class VideoDetailHeaderAdapter(
             // Nested horizontal lists can change their measured height after adapter updates;
             // ensure the header item gets re-measured to avoid overlap with following items.
             binding.root.requestLayout()
+        }
+
+        private fun bindTags(tags: List<VideoTag>) {
+            val safeTags = tags.filter { it.tagId > 0L && it.tagName.isNotBlank() }
+            binding.chipGroupTags.isVisible = safeTags.isNotEmpty()
+            if (safeTags.isEmpty()) {
+                binding.chipGroupTags.removeAllViews()
+                lastTagsKey = null
+                return
+            }
+
+            val key = safeTags.joinToString("|") { it.stableKey() }
+            if (key == lastTagsKey && binding.chipGroupTags.childCount == safeTags.size) return
+            lastTagsKey = key
+
+            binding.chipGroupTags.removeAllViews()
+            val inflater = LayoutInflater.from(binding.root.context)
+            for (tag in safeTags) {
+                val chip =
+                    inflater.inflate(blbl.cat3399.R.layout.item_video_detail_tag, binding.chipGroupTags, false) as Chip
+                chip.text = tag.tagName
+                chip.isCheckable = false
+                chip.setOnClickListener { onTagClick(tag) }
+                binding.chipGroupTags.addView(chip)
+            }
         }
 
         private fun applyCoverContainerRatio(usePosterCover: Boolean) {

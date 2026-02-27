@@ -12,6 +12,7 @@ import blbl.cat3399.core.model.Following
 import blbl.cat3399.core.model.LiveAreaParent
 import blbl.cat3399.core.model.LiveRoomCard
 import blbl.cat3399.core.model.VideoCard
+import blbl.cat3399.core.model.VideoTag
 import android.util.Base64
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.net.WebCookieMaintainer
@@ -1020,6 +1021,12 @@ object BiliApi {
     suspend fun view(bvid: String): JSONObject = VideoApi.view(bvid = bvid)
 
     suspend fun view(aid: Long): JSONObject = VideoApi.view(aid = aid)
+
+    suspend fun viewTags(
+        bvid: String? = null,
+        aid: Long? = null,
+        cid: Long? = null,
+    ): List<VideoTag> = VideoApi.viewTags(bvid = bvid, aid = aid, cid = cid)
 
     suspend fun commentPage(
         type: Int,

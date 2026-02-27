@@ -15,6 +15,7 @@ import androidx.recyclerview.widget.SimpleItemAnimator
 import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
+import blbl.cat3399.core.model.VideoTag
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.ui.ActivityStackLimiter
 import blbl.cat3399.core.ui.AppToast
@@ -38,6 +39,8 @@ import blbl.cat3399.feature.player.parseUgcSeasonPlaylistFromViewWithUiCards
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -64,6 +67,7 @@ class VideoDetailActivity : BaseActivity() {
     private var desc: String? = null
     private var metaText: String? = null
     private var tabName: String? = null
+    private var tags: List<VideoTag> = emptyList()
 
     private var playlistToken: String? = null
     private var playlistIndex: Int? = null
@@ -190,6 +194,7 @@ class VideoDetailActivity : BaseActivity() {
                 onTabClick = { tab ->
                     AppToast.show(this, "暂不支持：$tab")
                 },
+                onTagClick = { tag -> onVideoTagClick(tag) },
                 onLikeClick = { AppToast.show(this, "暂不支持点赞") },
                 onCoinClick = { AppToast.show(this, "暂不支持投币") },
                 onFavClick = { AppToast.show(this, "暂不支持收藏") },
@@ -280,6 +285,7 @@ class VideoDetailActivity : BaseActivity() {
             upName = ownerName,
             upAvatar = ownerAvatar,
             tabName = tabName,
+            tags = tags,
             primaryButtonText = "播放",
             secondaryButtonText = null,
             showActions = true,
@@ -430,12 +436,23 @@ class VideoDetailActivity : BaseActivity() {
                             cid = resolvedCid,
                         ).takeIf { it >= 0 }
 
-                    val related =
-                        withContext(Dispatchers.IO) {
-                            runCatching { BiliApi.archiveRelated(bvid = resolvedBvid, aid = resolvedAid) }.getOrDefault(emptyList())
+                    val (fetchedTags, related) =
+                        coroutineScope {
+                            val tagsDeferred =
+                                async(Dispatchers.IO) {
+                                    runCatching { BiliApi.viewTags(bvid = resolvedBvid, aid = resolvedAid, cid = resolvedCid) }
+                                        .getOrDefault(emptyList())
+                                }
+                            val relatedDeferred =
+                                async(Dispatchers.IO) {
+                                    runCatching { BiliApi.archiveRelated(bvid = resolvedBvid, aid = resolvedAid) }
+                                        .getOrDefault(emptyList())
+                                }
+                            tagsDeferred.await() to relatedDeferred.await()
                         }
                     if (codeToken != requestToken) return@launch
 
+                    tags = fetchedTags
                     applyHeader()
                     recommendAdapter.submit(related)
                 } catch (t: Throwable) {
@@ -622,6 +639,9 @@ class VideoDetailActivity : BaseActivity() {
         )
     }
 
+    @Suppress("UNUSED_PARAMETER")
+    private fun onVideoTagClick(tag: VideoTag) {}
+
     private fun spanCountForWidth(): Int {
         val dm = resources.displayMetrics
         val widthDp = dm.widthPixels / dm.density
@@ -658,6 +678,7 @@ class VideoDetailActivity : BaseActivity() {
             upName = ownerName,
             upAvatar = ownerAvatar,
             tabName = tabName,
+            tags = tags,
             primaryButtonText = "播放",
             secondaryButtonText = null,
             showActions = true,

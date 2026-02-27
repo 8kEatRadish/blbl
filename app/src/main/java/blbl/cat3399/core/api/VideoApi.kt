@@ -4,10 +4,12 @@ import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.core.model.Danmaku
 import blbl.cat3399.core.model.DanmakuUserFilter
 import blbl.cat3399.core.model.VideoCard
+import blbl.cat3399.core.model.VideoTag
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.net.WebCookieMaintainer
 import blbl.cat3399.proto.dm.DmSegMobileReply
 import blbl.cat3399.proto.dmview.DmWebViewReply
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -169,6 +171,111 @@ internal object VideoApi {
                 mapOf("aid" to safeAid.toString()),
             )
         return BiliClient.getJson(url)
+    }
+
+    suspend fun viewTags(
+        bvid: String? = null,
+        aid: Long? = null,
+        cid: Long? = null,
+    ): List<VideoTag> {
+        val safeBvid = bvid?.trim().takeIf { !it.isNullOrBlank() }
+        val safeAid = aid?.takeIf { it > 0L }
+        val safeCid = cid?.takeIf { it > 0L }
+        if (safeBvid == null && safeAid == null) error("view_tags_missing_bvid_aid")
+
+        return try {
+            viewTagsNew(bvid = safeBvid, aid = safeAid, cid = safeCid)
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            viewTagsOld(bvid = safeBvid, aid = safeAid)
+        }
+    }
+
+    private suspend fun viewTagsNew(
+        bvid: String?,
+        aid: Long?,
+        cid: Long?,
+    ): List<VideoTag> {
+        val params = LinkedHashMap<String, String>(3)
+        if (bvid != null) {
+            params["bvid"] = bvid
+        } else if (aid != null) {
+            params["aid"] = aid.toString()
+        } else {
+            error("view_tags_missing_bvid_aid")
+        }
+        cid?.let { params["cid"] = it.toString() }
+
+        val url = BiliClient.withQuery("https://api.bilibili.com/x/web-interface/view/detail/tag", params)
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+        val list = json.optJSONArray("data") ?: JSONArray()
+        val out = ArrayList<VideoTag>(list.length())
+        for (i in 0 until list.length()) {
+            val obj = list.optJSONObject(i) ?: continue
+            val tagType = obj.optString("tag_type", "").trim()
+            if (tagType != "old_channel") continue
+            val tagId = obj.optLong("tag_id").takeIf { it > 0L } ?: continue
+            val tagName = obj.optString("tag_name", "").trim()
+            if (tagName.isBlank()) continue
+
+            val jumpUrl = obj.optString("jump_url", "").trim().takeIf { it.isNotBlank() }
+            val musicId = obj.optString("music_id", "").trim().takeIf { it.isNotBlank() }
+            out.add(
+                VideoTag(
+                    tagId = tagId,
+                    tagName = tagName,
+                    tagType = tagType,
+                    jumpUrl = jumpUrl,
+                    musicId = musicId,
+                ),
+            )
+        }
+        return out
+    }
+
+    private suspend fun viewTagsOld(
+        bvid: String?,
+        aid: Long?,
+    ): List<VideoTag> {
+        val params = LinkedHashMap<String, String>(2)
+        if (bvid != null) {
+            params["bvid"] = bvid
+        } else if (aid != null) {
+            params["aid"] = aid.toString()
+        } else {
+            error("view_tags_missing_bvid_aid")
+        }
+
+        val url = BiliClient.withQuery("https://api.bilibili.com/x/tag/archive/tags", params)
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+        val list = json.optJSONArray("data") ?: JSONArray()
+        val out = ArrayList<VideoTag>(list.length())
+        for (i in 0 until list.length()) {
+            val obj = list.optJSONObject(i) ?: continue
+            val tagId = obj.optLong("tag_id").takeIf { it > 0L } ?: continue
+            val tagName = obj.optString("tag_name", "").trim()
+            if (tagName.isBlank()) continue
+            out.add(
+                VideoTag(
+                    tagId = tagId,
+                    tagName = tagName,
+                    tagType = "old_channel",
+                    jumpUrl = null,
+                    musicId = null,
+                ),
+            )
+        }
+        return out
     }
 
     suspend fun commentPage(

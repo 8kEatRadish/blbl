@@ -6,8 +6,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.recyclerview.widget.LinearLayoutManager
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.ui.BaseActivity
+import blbl.cat3399.core.ui.FocusTreeUtils
 import blbl.cat3399.core.ui.cloneInUserScale
 import blbl.cat3399.core.ui.Immersive
+import blbl.cat3399.core.ui.popup.PopupHost
 import blbl.cat3399.databinding.ActivitySettingsBinding
 
 class SettingsActivity : BaseActivity() {
@@ -100,10 +102,37 @@ class SettingsActivity : BaseActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN && currentFocus == null && renderer.isNavKey(event.keyCode)) {
+        if (!this::renderer.isInitialized || !this::binding.isInitialized) return super.dispatchKeyEvent(event)
+
+        val popupHost = PopupHost.peek(this)
+        if (popupHost != null && popupHost.consumeBackLikeKeyEventIfNeeded(event)) {
+            return true
+        }
+
+        val keyCode = event.keyCode
+        if (isBackLikeKey(keyCode)) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                val focused = currentFocus
+                val focusInContent = focused != null && FocusTreeUtils.isDescendantOf(focused, binding.recyclerRight)
+                if (focusInContent) {
+                    renderer.focusSectionTab(state.currentSectionIndex)
+                } else {
+                    finish()
+                }
+            }
+            return true
+        }
+
+        if (event.action == KeyEvent.ACTION_DOWN && currentFocus == null && renderer.isNavKey(keyCode)) {
             renderer.ensureInitialFocus()
             return true
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun isBackLikeKey(keyCode: Int): Boolean {
+        return keyCode == KeyEvent.KEYCODE_BACK ||
+            keyCode == KeyEvent.KEYCODE_ESCAPE ||
+            keyCode == KeyEvent.KEYCODE_BUTTON_B
     }
 }

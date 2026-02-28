@@ -134,6 +134,16 @@ class SettingsRenderer(
         return true
     }
 
+    fun focusSectionTab(index: Int): Boolean {
+        val count = leftAdapter.itemCount
+        if (count <= 0) return false
+        val safeIndex =
+            index.takeIf { it in 0 until count }
+                ?: state.lastFocusedLeftIndex.takeIf { it in 0 until count }
+                ?: 0
+        return focusLeftAt(safeIndex)
+    }
+
     fun isNavKey(keyCode: Int): Boolean {
         return when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP,
@@ -156,7 +166,7 @@ class SettingsRenderer(
             "通用设置" ->
                 listOf(
                     SettingEntry(SettingId.ImageQuality, "图片质量", prefs.imageQuality, null),
-                    SettingEntry(SettingId.ThemePreset, "主题预设", SettingsText.themePresetText(prefs.themePreset), "立即生效；播放器不受影响"),
+                    SettingEntry(SettingId.ThemePreset, "主题", SettingsText.themePresetText(prefs.themePreset), null),
                     SettingEntry(SettingId.UserAgent, "User-Agent", prefs.userAgent.take(60), null),
                     SettingEntry(SettingId.Ipv4OnlyEnabled, "是否只允许使用IPV4", if (prefs.ipv4OnlyEnabled) "开" else "关", null),
                     SettingEntry(SettingId.GaiaVgate, "风控验证", gaiaVgateStatusText(), "播放被拦截后可在此手动完成人机验证"),
@@ -182,7 +192,7 @@ class SettingsRenderer(
                         SettingId.MainBackFocusScheme,
                         "返回键焦点策略",
                         SettingsText.mainBackFocusSchemeText(prefs.mainBackFocusScheme),
-                        "主页面内容区按返回键（动态页固定回侧边栏）",
+                        null,
                     ),
                 )
 
@@ -265,7 +275,7 @@ class SettingsRenderer(
                     SettingEntry(SettingId.ProjectUrl, "项目地址", SettingsConstants.PROJECT_URL, null),
                     SettingEntry(SettingId.QqGroup, "QQ交流群", SettingsConstants.QQ_GROUP, null),
                     SettingEntry(SettingId.LogTag, "日志标签", "BLBL", "用于 Logcat 过滤"),
-                    SettingEntry(SettingId.ExportLogs, "导出日志", "选择文件夹", "导出日志zip到你选择的文件夹"),
+                    SettingEntry(SettingId.ExportLogs, "导出日志", "选择文件夹", null),
                     SettingEntry(SettingId.UploadLogs, "上传日志", "点击上传", "打包并上传日志zip到开发者（含设备/版本等元数据）"),
                     aboutUpdateEntry(),
                 )

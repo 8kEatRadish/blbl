@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.text.InputType
@@ -18,6 +19,7 @@ import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.core.log.LogExporter
 import blbl.cat3399.core.log.LogUploadClient
 import blbl.cat3399.core.net.BiliClient
+import blbl.cat3399.core.prefs.AppPrefs
 import blbl.cat3399.core.theme.LauncherAliasManager
 import blbl.cat3399.core.ui.AppToast
 import blbl.cat3399.core.ui.Immersive
@@ -43,6 +45,7 @@ import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 import org.json.JSONObject
+import org.json.JSONArray
 
 class SettingsInteractionHandler(
     private val activity: SettingsActivity,
@@ -160,9 +163,8 @@ class SettingsInteractionHandler(
             context = activity,
             title = "上传日志",
             message =
-                "将打包并上传日志zip到开发者，用于定位问题。\n\n" +
-                    "日志中会包含：设备信息、版本信息、是否登录等元数据；以及最近的运行日志/崩溃堆栈。\n\n" +
-                    "注意：日志可能包含隐私内容（例如账号信息、播放记录等），请确认后再上传。",
+                "将日志上传给开发者便于排查问题。\n\n" +
+                    "反馈问题时请带上上传成功后显示的文件名。",
             positiveText = "上传",
             negativeText = "取消",
             cancelable = true,
@@ -188,8 +190,9 @@ class SettingsInteractionHandler(
                 try {
                     val nowMs = System.currentTimeMillis()
                     val deviceUuid = BiliClient.prefs.deviceUuid
-                    val ts = formatUploadTimestamp(nowMs)
-                    val fileName = "${deviceUuid}-${ts}.zip"
+                    val epochSeconds = (nowMs / 1000L).coerceAtLeast(0L)
+                    val deviceId8 = deviceUuid.replace("-", "").take(8).ifBlank { "unknown00" }
+                    val fileName = "${epochSeconds}-${deviceId8}.zip"
                     val metaJson = buildUploadMetaJson(nowMs = nowMs, deviceUuid = deviceUuid)
 
                     popup?.updateProgress(null)
@@ -212,22 +215,31 @@ class SettingsInteractionHandler(
                     exportedFile = export.file
 
                     currentCoroutineContext().ensureActive()
-                    popup?.updateProgress(null)
-                    popup?.updateStatus("上传中…")
-                    val uploaded =
-                        withContext(Dispatchers.IO) {
-                            LogUploadClient.uploadZip(
-                                file = export.file,
-                                fileName = export.fileName,
-                            )
-                        }
+                    popup?.updateProgress(0)
+                    popup?.updateStatus("上传中… 0%")
+                    var lastPct = -1
+                    var lastUpdateAtMs = 0L
+                    withContext(Dispatchers.IO) {
+                        LogUploadClient.uploadZip(
+                            file = export.file,
+                            fileName = export.fileName,
+                            onProgress = { sentBytes, totalBytes ->
+                                if (totalBytes <= 0L) return@uploadZip
+                                val pct = ((sentBytes.coerceAtLeast(0L) * 100L) / totalBytes).toInt().coerceIn(0, 100)
+                                val now = System.currentTimeMillis()
+                                if (pct == lastPct && now - lastUpdateAtMs < 80L) return@uploadZip
+                                lastPct = pct
+                                lastUpdateAtMs = now
+                                val hint = "${SettingsText.formatBytes(sentBytes)}/${SettingsText.formatBytes(totalBytes)}"
+                                popup?.updateProgress(pct)
+                                popup?.updateStatus("上传中… ${pct}% $hint")
+                            },
+                        )
+                    }
 
                     popup?.dismiss()
                     showUploadLogsSuccessPopup(
-                        key = uploaded.key,
-                        id = uploaded.id,
                         fileName = export.fileName,
-                        deviceUuid = deviceUuid,
                     )
                 } catch (_: CancellationException) {
                     popup?.dismiss()
@@ -245,27 +257,9 @@ class SettingsInteractionHandler(
     }
 
     private fun showUploadLogsSuccessPopup(
-        key: String,
-        id: String?,
         fileName: String,
-        deviceUuid: String,
     ) {
-        val body =
-            buildString {
-                append("文件：")
-                append(fileName)
-                append('\n')
-                append("Key：")
-                append(key)
-                if (!id.isNullOrBlank()) {
-                    append('\n')
-                    append("ID：")
-                    append(id)
-                }
-                append('\n')
-                append("设备UUID：")
-                append(deviceUuid)
-            }
+        val body = "文件：$fileName"
 
         AppPopup.custom(
             context = activity,
@@ -274,11 +268,8 @@ class SettingsInteractionHandler(
             actions =
                 listOf(
                     PopupAction(role = PopupActionRole.NEGATIVE, text = "关闭"),
-                    PopupAction(role = PopupActionRole.NEUTRAL, text = "复制Key") {
-                        copyToClipboard(label = "日志上传Key", text = key, toastText = "已复制Key")
-                    },
-                    PopupAction(role = PopupActionRole.POSITIVE, text = "复制UUID") {
-                        copyToClipboard(label = "设备UUID", text = deviceUuid, toastText = "已复制UUID")
+                    PopupAction(role = PopupActionRole.NEUTRAL, text = "复制文件名") {
+                        copyToClipboard(label = "日志文件名", text = fileName, toastText = "已复制文件名")
                     },
                 ),
             preferredActionRole = PopupActionRole.NEUTRAL,
@@ -304,6 +295,7 @@ class SettingsInteractionHandler(
         val tzId = runCatching { java.util.TimeZone.getDefault().id }.getOrNull().orEmpty()
         val locale = runCatching { Locale.getDefault() }.getOrNull()
         val localeTag = runCatching { locale?.toLanguageTag() }.getOrNull().orEmpty()
+        val prefs = BiliClient.prefs
 
         val json =
             JSONObject()
@@ -336,14 +328,127 @@ class SettingsInteractionHandler(
                     JSONObject()
                         .put("is_logged_in", BiliClient.cookies.hasSessData()),
                 )
-                .put(
-                    "prefs",
-                    JSONObject()
-                        .put("ipv4_only_enabled", BiliClient.prefs.ipv4OnlyEnabled)
-                        .put("device_buvid", BiliClient.prefs.deviceBuvid),
-                )
+                .put("screen", buildUploadScreenJson())
+                .put("prefs", buildUploadPrefsJson(prefs))
 
         return json.toString(2)
+    }
+
+    private fun buildUploadScreenJson(): JSONObject {
+        val res = activity.resources
+        val dm = res.displayMetrics
+        val cfg = res.configuration
+
+        val orientation =
+            when (cfg.orientation) {
+                Configuration.ORIENTATION_PORTRAIT -> "portrait"
+                Configuration.ORIENTATION_LANDSCAPE -> "landscape"
+                else -> "undefined"
+            }
+        val nightMode =
+            when (cfg.uiMode and Configuration.UI_MODE_NIGHT_MASK) {
+                Configuration.UI_MODE_NIGHT_YES -> "yes"
+                Configuration.UI_MODE_NIGHT_NO -> "no"
+                else -> "undefined"
+            }
+
+        val sysDm = android.content.res.Resources.getSystem().displayMetrics
+        val scaledDensity = dm.density * cfg.fontScale
+        val systemScaledDensity = sysDm.density * cfg.fontScale
+
+        return JSONObject()
+            .put("width_px", dm.widthPixels)
+            .put("height_px", dm.heightPixels)
+            .put("density", dm.density)
+            .put("scaled_density", scaledDensity)
+            .put("density_dpi", dm.densityDpi)
+            .put("xdpi", dm.xdpi)
+            .put("ydpi", dm.ydpi)
+            .put("font_scale", cfg.fontScale)
+            .put("screen_width_dp", cfg.screenWidthDp)
+            .put("screen_height_dp", cfg.screenHeightDp)
+            .put("smallest_screen_width_dp", cfg.smallestScreenWidthDp)
+            .put("orientation", orientation)
+            .put("night_mode", nightMode)
+            .put(
+                "system_display_scale",
+                JSONObject()
+                    .put("density", sysDm.density)
+                    .put("scaled_density", systemScaledDensity)
+                    .put("density_dpi", sysDm.densityDpi),
+            )
+    }
+
+    private fun buildUploadPrefsJson(prefs: AppPrefs): JSONObject {
+        val osdButtons = JSONArray()
+        for (b in prefs.playerOsdButtons) osdButtons.put(b)
+
+        return JSONObject()
+            .put(
+                "ui",
+                JSONObject()
+                    .put("theme_preset", prefs.themePreset)
+                    .put("ui_scale_factor", prefs.uiScaleFactor)
+                    .put("sidebar_size", prefs.sidebarSize)
+                    .put("startup_page", prefs.startupPage)
+                    .put("image_quality", prefs.imageQuality)
+                    .put("fullscreen_enabled", prefs.fullscreenEnabled)
+                    .put("tab_switch_follows_focus", prefs.tabSwitchFollowsFocus)
+                    .put("main_back_focus_scheme", prefs.mainBackFocusScheme)
+                    .put("grid_span", prefs.gridSpanCount)
+                    .put("dynamic_grid_span", prefs.dynamicGridSpanCount)
+                    .put("pgc_grid_span", prefs.pgcGridSpanCount)
+                    .put("pgc_episode_order_reversed", prefs.pgcEpisodeOrderReversed),
+            )
+            .put(
+                "network",
+                JSONObject()
+                    .put("ipv4_only_enabled", prefs.ipv4OnlyEnabled)
+                    .put("user_agent", prefs.userAgent)
+                    .put("player_cdn_preference", prefs.playerCdnPreference),
+            )
+            .put(
+                "danmaku",
+                JSONObject()
+                    .put("enabled", prefs.danmakuEnabled)
+                    .put("allow_top", prefs.danmakuAllowTop)
+                    .put("allow_bottom", prefs.danmakuAllowBottom)
+                    .put("allow_scroll", prefs.danmakuAllowScroll)
+                    .put("allow_color", prefs.danmakuAllowColor)
+                    .put("allow_special", prefs.danmakuAllowSpecial)
+                    .put("follow_bili_shield", prefs.danmakuFollowBiliShield)
+                    .put("ai_shield_enabled", prefs.danmakuAiShieldEnabled)
+                    .put("ai_shield_level", prefs.danmakuAiShieldLevel)
+                    .put("opacity", prefs.danmakuOpacity)
+                    .put("text_size_sp", prefs.danmakuTextSizeSp)
+                    .put("speed", prefs.danmakuSpeed)
+                    .put("area", prefs.danmakuArea),
+            )
+            .put(
+                "player",
+                JSONObject()
+                    .put("preferred_qn", prefs.playerPreferredQn)
+                    .put("preferred_qn_portrait", prefs.playerPreferredQnPortrait)
+                    .put("preferred_codec", prefs.playerPreferredCodec)
+                    .put("render_view_type", prefs.playerRenderViewType)
+                    .put("engine_kind", prefs.playerEngineKind)
+                    .put("preferred_audio_id", prefs.playerPreferredAudioId)
+                    .put("subtitle_lang", prefs.subtitlePreferredLang)
+                    .put("subtitle_enabled_default", prefs.subtitleEnabledDefault)
+                    .put("subtitle_text_size_sp", prefs.subtitleTextSizeSp)
+                    .put("speed", prefs.playerSpeed)
+                    .put("hold_seek_speed", prefs.playerHoldSeekSpeed)
+                    .put("hold_seek_mode", prefs.playerHoldSeekMode)
+                    .put("auto_resume_enabled", prefs.playerAutoResumeEnabled)
+                    .put("auto_skip_segments_enabled", prefs.playerAutoSkipSegmentsEnabled)
+                    .put("open_detail_before_play", prefs.playerOpenDetailBeforePlay)
+                    .put("debug_enabled", prefs.playerDebugEnabled)
+                    .put("double_back_to_exit", prefs.playerDoubleBackToExit)
+                    .put("down_key_osd_focus_target", prefs.playerDownKeyOsdFocusTarget)
+                    .put("persistent_bottom_progress_enabled", prefs.playerPersistentBottomProgressEnabled)
+                    .put("playback_mode", prefs.playerPlaybackMode)
+                    .put("osd_buttons", osdButtons),
+            )
     }
 
     private fun canOpenDocumentTree(): Boolean {
@@ -374,7 +479,7 @@ class SettingsInteractionHandler(
                         blbl.cat3399.core.prefs.AppPrefs.THEME_PRESET_TV_PINK to "小电视粉",
                     )
                 showChoiceDialog(
-                    title = "主题预设",
+                    title = "主题",
                     items = options.map { it.second },
                     current = SettingsText.themePresetText(prefs.themePreset),
                 ) { selected ->
@@ -383,13 +488,13 @@ class SettingsInteractionHandler(
                             ?: blbl.cat3399.core.prefs.AppPrefs.THEME_PRESET_DEFAULT
 
                     if (prefs.themePreset == key) {
-                        AppToast.show(activity, "主题预设：$selected")
+                        AppToast.show(activity, "主题：$selected")
                         return@showChoiceDialog
                     }
 
                     prefs.themePreset = key
                     LauncherAliasManager.sync(activity.applicationContext, key)
-                    AppToast.show(activity, "主题预设：$selected（已应用）")
+                    AppToast.show(activity, "主题：$selected（已应用）")
                     restartToMainForThemePreset()
                 }
             }

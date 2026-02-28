@@ -8,7 +8,12 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import okio.Buffer
+import okio.BufferedSink
+import okio.ForwardingSink
+import okio.buffer
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -45,6 +50,7 @@ object LogUploadClient {
     suspend fun uploadZip(
         file: File,
         fileName: String = file.name,
+        onProgress: ((sentBytes: Long, totalBytes: Long) -> Unit)? = null,
     ): UploadResult {
         val f = file.takeIf { it.exists() && it.isFile } ?: throw IOException("日志文件不存在")
         val len = runCatching { f.length() }.getOrDefault(0L).coerceAtLeast(0L)
@@ -52,7 +58,17 @@ object LogUploadClient {
         if (len > MAX_UPLOAD_BYTES) throw IOException("日志文件过大：${len}B（上限 ${MAX_UPLOAD_BYTES}B）")
 
         val safeName = sanitizeFileName(fileName).ifBlank { f.name }
-        val body = f.asRequestBody("application/zip".toMediaType())
+        val rawBody = f.asRequestBody("application/zip".toMediaType())
+        val body =
+            if (onProgress == null) {
+                rawBody
+            } else {
+                CountingRequestBody(
+                    delegate = rawBody,
+                    totalBytes = len,
+                    onProgress = onProgress,
+                )
+            }
         val req =
             Request.Builder()
                 .url(UPLOAD_URL)
@@ -92,5 +108,32 @@ object LogUploadClient {
         val trimmed = name.trim()
         if (trimmed.isBlank()) return ""
         return trimmed.replace(Regex("[\\\\/\\r\\n\\t\\u0000]"), "_").take(96)
+    }
+
+    private class CountingRequestBody(
+        private val delegate: RequestBody,
+        private val totalBytes: Long,
+        private val onProgress: (sentBytes: Long, totalBytes: Long) -> Unit,
+    ) : RequestBody() {
+        override fun contentType() = delegate.contentType()
+
+        override fun contentLength(): Long = totalBytes.takeIf { it > 0L } ?: delegate.contentLength()
+
+        override fun writeTo(sink: BufferedSink) {
+            onProgress(0L, totalBytes)
+
+            var sent = 0L
+            val forwardingSink =
+                object : ForwardingSink(sink) {
+                    override fun write(source: Buffer, byteCount: Long) {
+                        super.write(source, byteCount)
+                        sent += byteCount
+                        onProgress(sent.coerceAtMost(totalBytes), totalBytes)
+                    }
+                }
+            val buffered = forwardingSink.buffer()
+            delegate.writeTo(buffered)
+            buffered.flush()
+        }
     }
 }

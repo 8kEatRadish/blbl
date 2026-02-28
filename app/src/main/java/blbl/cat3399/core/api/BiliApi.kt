@@ -222,6 +222,11 @@ object BiliApi {
         val total: Int,
     )
 
+    data class PgcFollowActionResult(
+        val status: Int?,
+        val toast: String?,
+    )
+
     data class LiveRoomInfo(
         val roomId: Long,
         val uid: Long,
@@ -780,6 +785,55 @@ object BiliApi {
         return bangumiSeasonDetailInner(url = url, seasonId = null, epId = safeEpId)
     }
 
+    suspend fun pgcFollowAdd(seasonId: Long): PgcFollowActionResult {
+        return pgcFollowAction(
+            url = "https://api.bilibili.com/pgc/web/follow/add",
+            seasonId = seasonId,
+        )
+    }
+
+    suspend fun pgcFollowDel(seasonId: Long): PgcFollowActionResult {
+        return pgcFollowAction(
+            url = "https://api.bilibili.com/pgc/web/follow/del",
+            seasonId = seasonId,
+        )
+    }
+
+    private suspend fun pgcFollowAction(
+        url: String,
+        seasonId: Long,
+    ): PgcFollowActionResult {
+        val safeSeasonId = seasonId.takeIf { it > 0L } ?: error("seasonId required")
+
+        WebCookieMaintainer.ensureWebFingerprintCookies()
+        WebCookieMaintainer.ensureBuvidActiveOncePerDay()
+        val csrf = BiliClient.cookies.getCookieValue("bili_jct").orEmpty().trim()
+        if (csrf.isBlank()) throw BiliApiException(apiCode = -111, apiMessage = "missing_csrf")
+
+        val form =
+            mapOf(
+                "season_id" to safeSeasonId.toString(),
+                "csrf" to csrf,
+            )
+        val json =
+            BiliClient.postFormJson(
+                url,
+                form = form,
+                headers = piliWebHeaders(targetUrl = url, includeCookie = true),
+                noCookies = true,
+            )
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+
+        val result = json.optJSONObject("result") ?: JSONObject()
+        val status = result.optInt("status", -1).takeIf { it >= 0 }
+        val toast = result.optString("toast", "").trim().takeIf { it.isNotBlank() }
+        return PgcFollowActionResult(status = status, toast = toast)
+    }
+
     private suspend fun bangumiSeasonDetailInner(
         url: String,
         seasonId: Long?,
@@ -867,6 +921,16 @@ object BiliApi {
                 "parsed=$progressLastEpId episodes=${parsed.first.size} extra=${parsed.second.sumOf { it.episodes.size }}",
         )
         val resolvedSeasonId = result.optLong("season_id").takeIf { it > 0 } ?: seasonId ?: 0L
+        val userStatus = result.optJSONObject("user_status") ?: JSONObject()
+        val follow = userStatus.optInt("follow", -1).takeIf { it >= 0 }
+        val followStatus = userStatus.optInt("follow_status", -1).takeIf { it >= 0 }
+        val isFollowed =
+            when {
+                follow == 1 -> true
+                follow == 0 -> false
+                followStatus != null -> followStatus > 0
+                else -> null
+            }
         return BangumiSeasonDetail(
             seasonId = resolvedSeasonId,
             title = result.optString("title", result.optString("season_title", "")),
@@ -879,6 +943,7 @@ object BiliApi {
             episodes = parsed.first,
             extraSections = parsed.second,
             progressLastEpId = progressLastEpId,
+            isFollowed = isFollowed,
         )
     }
 
@@ -1017,6 +1082,13 @@ object BiliApi {
     suspend fun popular(pn: Int = 1, ps: Int = 20): List<VideoCard> = VideoApi.popular(pn = pn, ps = ps)
 
     suspend fun regionLatest(rid: Int, pn: Int = 1, ps: Int = 20): List<VideoCard> = VideoApi.regionLatest(rid = rid, pn = pn, ps = ps)
+
+    suspend fun dynamicTag(
+        rid: Int,
+        tagId: Long,
+        pn: Int = 1,
+        ps: Int = 20,
+    ): HasMorePage<VideoCard> = VideoApi.dynamicTag(rid = rid, tagId = tagId, pn = pn, ps = ps)
 
     suspend fun view(bvid: String): JSONObject = VideoApi.view(bvid = bvid)
 

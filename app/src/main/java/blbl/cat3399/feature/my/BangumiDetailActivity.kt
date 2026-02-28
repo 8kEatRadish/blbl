@@ -57,6 +57,9 @@ class BangumiDetailActivity : BaseActivity() {
     private var desc: String? = null
     private var coverUrl: String? = null
 
+    private var isFollowed: Boolean? = null
+    private var followActionJob: Job? = null
+
     private var episodeOrderReversed: Boolean = false
     private var extrasOrderReversed: Boolean = false
 
@@ -135,7 +138,7 @@ class BangumiDetailActivity : BaseActivity() {
                 onLikeClick = { /* no-op */ },
                 onCoinClick = { /* no-op */ },
                 onFavClick = { /* no-op */ },
-                onSecondaryClick = { AppToast.show(this, "暂不支持操作") },
+                onSecondaryClick = { onFollowButtonClicked() },
                 onPrimaryActionFocused = { smoothScrollHeaderToTop() },
                 onSecondaryActionFocused = { smoothScrollHeaderToTop() },
                 onPartsOrderClick = {
@@ -209,6 +212,11 @@ class BangumiDetailActivity : BaseActivity() {
         title = detail.title
         desc = detail.evaluate.orEmpty()
         coverUrl = detail.coverUrl
+        if (detail.isFollowed != null) {
+            isFollowed = detail.isFollowed
+        } else if (isFollowed == null) {
+            isFollowed = false
+        }
 
         metaText =
             buildList {
@@ -282,8 +290,13 @@ class BangumiDetailActivity : BaseActivity() {
             upAvatar = null,
             tabName = null,
             tags = emptyList(),
-            primaryButtonText = getString(R.string.my_btn_continue),
-            secondaryButtonText = if (isDramaArg) "已追剧" else "已追番",
+            primaryButtonText = getString(if (continueEpisode != null) R.string.my_btn_continue else R.string.my_btn_play),
+            secondaryButtonText =
+                if (isFollowed == true) {
+                    if (isDramaArg) "已追剧" else "已追番"
+                } else {
+                    if (isDramaArg) "追剧" else "追番"
+                },
             showActions = false,
             partsHeaderText = episodesHeader,
             partsCards = displayEpisodeCards,
@@ -316,6 +329,48 @@ class BangumiDetailActivity : BaseActivity() {
             return
         }
         playEpisodeCard(first, listKind = "main")
+    }
+
+    private fun onFollowButtonClicked() {
+        if (followActionJob?.isActive == true) return
+        if (!BiliClient.cookies.hasSessData()) {
+            AppToast.show(this, if (isDramaArg) "请先登录后再追剧" else "请先登录后再追番")
+            return
+        }
+        val seasonId = resolvedSeasonId ?: seasonIdArg
+        if (seasonId == null || seasonId <= 0L) {
+            AppToast.show(this, "缺少 seasonId")
+            return
+        }
+        val followed = isFollowed == true
+
+        followActionJob =
+            lifecycleScope.launch {
+                try {
+                    val res =
+                        withContext(Dispatchers.IO) {
+                            if (followed) {
+                                BiliApi.pgcFollowDel(seasonId = seasonId)
+                            } else {
+                                BiliApi.pgcFollowAdd(seasonId = seasonId)
+                            }
+                        }
+                    val nextFollowed = res.status?.let { it > 0 } ?: !followed
+                    isFollowed = nextFollowed
+                    applyHeader()
+                    val fallbackToast =
+                        when {
+                            nextFollowed -> if (isDramaArg) "追剧成功" else "追番成功"
+                            else -> if (isDramaArg) "已取消追剧" else "已取消追番"
+                        }
+                    AppToast.show(this@BangumiDetailActivity, res.toast ?: fallbackToast)
+                } catch (t: Throwable) {
+                    if (t is CancellationException) return@launch
+                    AppToast.show(this@BangumiDetailActivity, t.message ?: "操作失败")
+                } finally {
+                    followActionJob = null
+                }
+            }
     }
 
     private fun playEpisodeCard(card: VideoCard, listKind: String) {

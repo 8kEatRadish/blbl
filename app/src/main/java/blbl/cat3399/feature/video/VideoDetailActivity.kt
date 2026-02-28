@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
 import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
+import blbl.cat3399.core.api.BiliApiException
 import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.core.model.VideoTag
 import blbl.cat3399.core.net.BiliClient
@@ -27,6 +28,7 @@ import blbl.cat3399.core.ui.cloneInUserScale
 import blbl.cat3399.core.ui.smoothScrollToPositionStart
 import blbl.cat3399.core.util.parseBangumiRedirectUrl
 import blbl.cat3399.core.util.Format
+import blbl.cat3399.core.ui.popup.AppPopup
 import blbl.cat3399.databinding.ActivityVideoDetailBinding
 import blbl.cat3399.feature.following.UpDetailActivity
 import blbl.cat3399.feature.my.BangumiDetailActivity
@@ -36,6 +38,7 @@ import blbl.cat3399.feature.player.PlayerPlaylistStore
 import blbl.cat3399.feature.player.parseMultiPagePlaylistFromViewWithUiCards
 import blbl.cat3399.feature.player.parseUgcSeasonPlaylistFromArchivesListWithUiCards
 import blbl.cat3399.feature.player.parseUgcSeasonPlaylistFromViewWithUiCards
+import blbl.cat3399.feature.tag.TagDetailActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,6 +70,7 @@ class VideoDetailActivity : BaseActivity() {
     private var desc: String? = null
     private var metaText: String? = null
     private var tabName: String? = null
+    private var tabId: Int? = null
     private var tags: List<VideoTag> = emptyList()
 
     private var playlistToken: String? = null
@@ -80,6 +84,16 @@ class VideoDetailActivity : BaseActivity() {
     private var currentUgcSeasonUiCards: List<blbl.cat3399.core.model.VideoCard> = emptyList()
     private var currentUgcSeasonIndex: Int? = null
     private var seasonOrderReversed: Boolean = false
+
+    private var actionLiked: Boolean = false
+    private var actionCoinCount: Int = 0
+    private var actionFavored: Boolean = false
+    private var likeActionJob: Job? = null
+    private var coinActionJob: Job? = null
+    private var favDialogJob: Job? = null
+    private var favApplyJob: Job? = null
+    private var socialStateFetchJob: Job? = null
+    private var socialStateFetchToken: Int = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -191,13 +205,11 @@ class VideoDetailActivity : BaseActivity() {
             VideoDetailHeaderAdapter(
                 onPlayClick = { playCurrentFromHeader() },
                 onUpClick = { openUpDetail() },
-                onTabClick = { tab ->
-                    AppToast.show(this, "暂不支持：$tab")
-                },
+                onTabClick = { tab -> openRegionTab(tab) },
                 onTagClick = { tag -> onVideoTagClick(tag) },
-                onLikeClick = { AppToast.show(this, "暂不支持点赞") },
-                onCoinClick = { AppToast.show(this, "暂不支持投币") },
-                onFavClick = { AppToast.show(this, "暂不支持收藏") },
+                onLikeClick = { onLikeButtonClicked() },
+                onCoinClick = { onCoinButtonClicked() },
+                onFavClick = { onFavButtonClicked() },
                 onSecondaryClick = { /* video detail has no secondary action yet */ },
                 onUpCardFocused = { smoothScrollHeaderToTop() },
                 onPartsOrderClick = {
@@ -289,6 +301,9 @@ class VideoDetailActivity : BaseActivity() {
             primaryButtonText = "播放",
             secondaryButtonText = null,
             showActions = true,
+            actionLiked = actionLiked,
+            actionCoinCount = actionCoinCount,
+            actionFavored = actionFavored,
             partsHeaderText = buildPartsHeaderText(cardsCount = currentPartsUiCards.size),
             partsCards = partsCardsForDisplay(),
             partsSelectedKey = resolvePartsSelectedKey(),
@@ -368,7 +383,12 @@ class VideoDetailActivity : BaseActivity() {
                     title = viewData.optString("title", "").trim().takeIf { it.isNotBlank() } ?: title
                     desc = viewData.optString("desc", "").trim()
                     coverUrl = viewData.optString("pic", "").trim().takeIf { it.isNotBlank() } ?: coverUrl
+                    tabId = viewData.optInt("tid").takeIf { it > 0 } ?: tabId
                     tabName = viewData.optString("tname", "").trim().takeIf { it.isNotBlank() }
+
+                    actionLiked = false
+                    actionCoinCount = 0
+                    actionFavored = false
 
                     run {
                         val pubDate = viewData.optLong("pubdate").takeIf { it > 0L }
@@ -455,6 +475,7 @@ class VideoDetailActivity : BaseActivity() {
                     tags = fetchedTags
                     applyHeader()
                     recommendAdapter.submit(related)
+                    refreshActionButtonStatesFromServer(bvid = resolvedBvid, aid = resolvedAid)
                 } catch (t: Throwable) {
                     if (t is CancellationException) return@launch
                     AppLog.e("VideoDetail", "load failed bvid=$bvid aid=$aid", t)
@@ -639,8 +660,23 @@ class VideoDetailActivity : BaseActivity() {
         )
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun onVideoTagClick(tag: VideoTag) {}
+    private fun onVideoTagClick(tag: VideoTag) {
+        val safeRid = tabId?.takeIf { it > 0 }
+        if (safeRid == null) {
+            AppToast.show(this, "未获取到分区信息")
+            return
+        }
+        val safeTagId = tag.tagId.takeIf { it > 0L }
+        val safeTagName = tag.tagName.trim().takeIf { it.isNotBlank() }
+        if (safeTagId == null || safeTagName == null) return
+
+        startActivity(
+            Intent(this, TagDetailActivity::class.java)
+                .putExtra(TagDetailActivity.EXTRA_RID, safeRid)
+                .putExtra(TagDetailActivity.EXTRA_TAG_ID, safeTagId)
+                .putExtra(TagDetailActivity.EXTRA_TAG_NAME, safeTagName),
+        )
+    }
 
     private fun spanCountForWidth(): Int {
         val dm = resources.displayMetrics
@@ -682,6 +718,9 @@ class VideoDetailActivity : BaseActivity() {
             primaryButtonText = "播放",
             secondaryButtonText = null,
             showActions = true,
+            actionLiked = actionLiked,
+            actionCoinCount = actionCoinCount,
+            actionFavored = actionFavored,
             partsHeaderText = buildPartsHeaderText(cardsCount = currentPartsUiCards.size),
             partsCards = partsCardsForDisplay(),
             partsSelectedKey = resolvePartsSelectedKey(),
@@ -753,4 +792,260 @@ class VideoDetailActivity : BaseActivity() {
             append('|')
             append(card.title)
         }
+
+    private fun openRegionTab(tab: String) {
+        val safeRid = tabId?.takeIf { it > 0 }
+        val safeTab = tab.trim().takeIf { it.isNotBlank() }
+        if (safeRid == null || safeTab == null) {
+            AppToast.show(this, "未获取到分区信息")
+            return
+        }
+        startActivity(
+            Intent(this, RegionDetailActivity::class.java)
+                .putExtra(RegionDetailActivity.EXTRA_RID, safeRid)
+                .putExtra(RegionDetailActivity.EXTRA_TITLE, safeTab),
+        )
+    }
+
+    private fun refreshActionButtonStatesFromServer(
+        bvid: String,
+        aid: Long?,
+    ) {
+        if (!BiliClient.cookies.hasSessData()) return
+        val requestBvid = bvid.trim().takeIf { it.isNotBlank() } ?: return
+        val requestAid = aid?.takeIf { it > 0L }
+
+        socialStateFetchJob?.cancel()
+        val token = ++socialStateFetchToken
+        val baselineLiked = actionLiked
+        val baselineCoinCount = actionCoinCount
+        val baselineFavored = actionFavored
+
+        socialStateFetchJob =
+            lifecycleScope.launch {
+                try {
+                    val (liked, coins, favoured) =
+                        withContext(Dispatchers.IO) {
+                            coroutineScope {
+                                val likedJob =
+                                    async {
+                                        runCatching { BiliApi.archiveHasLike(bvid = requestBvid, aid = requestAid) }.getOrNull()
+                                    }
+                                val coinsJob =
+                                    async {
+                                        runCatching { BiliApi.archiveCoins(bvid = requestBvid, aid = requestAid) }.getOrNull()
+                                    }
+                                val favouredJob =
+                                    async {
+                                        runCatching { BiliApi.archiveFavoured(bvid = requestBvid, aid = requestAid) }.getOrNull()
+                                    }
+                                Triple(likedJob.await(), coinsJob.await(), favouredJob.await())
+                            }
+                        }
+
+                    if (token != socialStateFetchToken) return@launch
+                    if (this@VideoDetailActivity.bvid != requestBvid) return@launch
+                    if (requestAid != null && this@VideoDetailActivity.aid != requestAid) return@launch
+
+                    var changed = false
+                    liked?.let { value ->
+                        if (likeActionJob?.isActive != true && actionLiked == baselineLiked) {
+                            actionLiked = value
+                            changed = true
+                        }
+                    }
+                    coins?.let { value ->
+                        if (coinActionJob?.isActive != true && actionCoinCount == baselineCoinCount) {
+                            actionCoinCount = value.coerceIn(0, 2)
+                            changed = true
+                        }
+                    }
+                    favoured?.let { value ->
+                        if (favDialogJob?.isActive != true && favApplyJob?.isActive != true && actionFavored == baselineFavored) {
+                            actionFavored = value
+                            changed = true
+                        }
+                    }
+                    if (changed) applyHeader()
+                } finally {
+                    if (token == socialStateFetchToken) socialStateFetchJob = null
+                }
+            }
+    }
+
+    private fun onLikeButtonClicked() {
+        if (likeActionJob?.isActive == true) return
+        if (!BiliClient.cookies.hasSessData()) {
+            AppToast.show(this, "请先登录后再点赞")
+            return
+        }
+        val requestBvid = bvid.trim().takeIf { it.isNotBlank() } ?: return
+        val targetLike = !actionLiked
+
+        likeActionJob =
+            lifecycleScope.launch {
+                try {
+                    applyHeader()
+                    BiliApi.archiveLike(bvid = requestBvid, aid = aid, like = targetLike)
+                    if (bvid != requestBvid) return@launch
+                    actionLiked = targetLike
+                    AppToast.show(this@VideoDetailActivity, if (targetLike) "点赞成功" else "已取消赞")
+                } catch (t: Throwable) {
+                    if (t is CancellationException) return@launch
+                    val e = t as? BiliApiException
+                    if (targetLike && e?.apiCode == 65006) {
+                        if (bvid != requestBvid) return@launch
+                        actionLiked = true
+                        AppToast.show(this@VideoDetailActivity, "已点赞")
+                    } else {
+                        val msg = e?.apiMessage?.takeIf { it.isNotBlank() } ?: (t.message ?: "操作失败")
+                        AppToast.show(this@VideoDetailActivity, msg)
+                    }
+                } finally {
+                    likeActionJob = null
+                    applyHeader()
+                }
+            }
+    }
+
+    private fun onCoinButtonClicked() {
+        if (coinActionJob?.isActive == true) return
+        if (actionCoinCount >= 2) return
+        if (!BiliClient.cookies.hasSessData()) {
+            AppToast.show(this, "请先登录后再投币")
+            return
+        }
+        val requestBvid = bvid.trim().takeIf { it.isNotBlank() } ?: return
+
+        coinActionJob =
+            lifecycleScope.launch {
+                try {
+                    applyHeader()
+                    BiliApi.coinAdd(bvid = requestBvid, aid = aid, multiply = 1, selectLike = false)
+                    if (bvid != requestBvid) return@launch
+                    actionCoinCount = (actionCoinCount + 1).coerceAtMost(2)
+                    AppToast.show(this@VideoDetailActivity, "投币成功")
+                } catch (t: Throwable) {
+                    if (t is CancellationException) return@launch
+                    val e = t as? BiliApiException
+                    if (e?.apiCode == 34005) {
+                        if (bvid != requestBvid) return@launch
+                        actionCoinCount = 2
+                        AppToast.show(this@VideoDetailActivity, "已达到投币上限")
+                    } else {
+                        val msg = e?.apiMessage?.takeIf { it.isNotBlank() } ?: (t.message ?: "操作失败")
+                        AppToast.show(this@VideoDetailActivity, msg)
+                    }
+                } finally {
+                    coinActionJob = null
+                    applyHeader()
+                }
+            }
+    }
+
+    private fun onFavButtonClicked() {
+        if (favDialogJob?.isActive == true || favApplyJob?.isActive == true) return
+        val selfMid = BiliClient.cookies.getCookieValue("DedeUserID")?.trim()?.toLongOrNull()?.takeIf { it > 0L }
+        if (selfMid == null) {
+            AppToast.show(this, "请先登录后再收藏")
+            return
+        }
+        val rid = aid?.takeIf { it > 0L }
+        if (rid == null) {
+            AppToast.show(this, "未获取到 aid，暂不支持收藏")
+            return
+        }
+        val requestBvid = bvid
+        val requestAid = rid
+
+        favDialogJob =
+            lifecycleScope.launch {
+                try {
+                    applyHeader()
+                    val folders =
+                        withContext(Dispatchers.IO) {
+                            BiliApi.favFoldersWithState(upMid = selfMid, rid = requestAid)
+                        }
+                    if (bvid != requestBvid) return@launch
+                    if (folders.isEmpty()) {
+                        AppToast.show(this@VideoDetailActivity, "未获取到收藏夹")
+                        return@launch
+                    }
+
+                    val initial = folders.filter { it.favState }.map { it.mediaId }.toSet()
+                    actionFavored = initial.isNotEmpty()
+                    applyHeader()
+
+                    val labels =
+                        folders.map { folder ->
+                            if (folder.favState) "${folder.title}（已收藏）" else folder.title
+                        }
+                    AppPopup.singleChoice(
+                        context = this@VideoDetailActivity,
+                        title = "选择收藏夹",
+                        items = labels,
+                        checkedIndex = 0,
+                        onDismiss = { binding.recycler.post { headerAdapter.requestFocusFav() } },
+                    ) { index, _ ->
+                        val picked = folders.getOrNull(index)
+                        if (picked == null) {
+                            binding.recycler.post { headerAdapter.requestFocusFav() }
+                            return@singleChoice
+                        }
+
+                        val nextSelected = initial.toMutableSet()
+                        if (nextSelected.contains(picked.mediaId)) nextSelected.remove(picked.mediaId) else nextSelected.add(picked.mediaId)
+                        val add = (nextSelected - initial).toList()
+                        val del = (initial - nextSelected).toList()
+                        if (add.isNotEmpty() || del.isNotEmpty()) {
+                            applyFavSelection(
+                                requestBvid = requestBvid,
+                                rid = requestAid,
+                                add = add,
+                                del = del,
+                                selected = nextSelected.toSet(),
+                            )
+                        }
+                        binding.recycler.post { headerAdapter.requestFocusFav() }
+                    }
+                } catch (t: Throwable) {
+                    if (t is CancellationException) return@launch
+                    val e = t as? BiliApiException
+                    val msg = e?.apiMessage?.takeIf { it.isNotBlank() } ?: (t.message ?: "加载收藏夹失败")
+                    AppToast.show(this@VideoDetailActivity, msg)
+                } finally {
+                    favDialogJob = null
+                    applyHeader()
+                }
+            }
+    }
+
+    private fun applyFavSelection(
+        requestBvid: String,
+        rid: Long,
+        add: List<Long>,
+        del: List<Long>,
+        selected: Set<Long>,
+    ) {
+        if (favApplyJob?.isActive == true) return
+        favApplyJob =
+            lifecycleScope.launch {
+                try {
+                    applyHeader()
+                    BiliApi.favResourceDeal(rid = rid, addMediaIds = add, delMediaIds = del)
+                    if (bvid != requestBvid) return@launch
+                    actionFavored = selected.isNotEmpty()
+                    applyHeader()
+                    AppToast.show(this@VideoDetailActivity, "收藏已更新")
+                } catch (t: Throwable) {
+                    if (t is CancellationException) return@launch
+                    val e = t as? BiliApiException
+                    val msg = e?.apiMessage?.takeIf { it.isNotBlank() } ?: (t.message ?: "操作失败")
+                    AppToast.show(this@VideoDetailActivity, msg)
+                } finally {
+                    favApplyJob = null
+                    applyHeader()
+                }
+            }
+    }
 }

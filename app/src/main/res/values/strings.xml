@@ -32,6 +32,7 @@
     <string name="my_episode_order_desc">倒序</string>
     <string name="my_episode_order">剧集顺序</string>
     <string name="my_btn_continue">继续观看</string>
+    <string name="my_btn_play">播放</string>
     <string name="my_btn_followed">已追</string>
     <string name="search_clear">清空</string>
     <string name="search_backspace">后退</string>

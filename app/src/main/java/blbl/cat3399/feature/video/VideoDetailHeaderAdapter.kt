@@ -2,6 +2,7 @@ package blbl.cat3399.feature.video
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -47,6 +48,9 @@ class VideoDetailHeaderAdapter(
     private var primaryButtonText: String? = null
     private var secondaryButtonText: String? = null
     private var showActions: Boolean = true
+    private var actionLiked: Boolean = false
+    private var actionCoinCount: Int = 0
+    private var actionFavored: Boolean = false
 
     private var partsHeaderText: String? = null
     private var partsCards: List<VideoCard> = emptyList()
@@ -74,6 +78,12 @@ class VideoDetailHeaderAdapter(
 
     fun requestFocusPlay(): Boolean = holderRef?.get()?.binding?.btnPlay?.requestFocus() == true
 
+    fun requestFocusLike(): Boolean = holderRef?.get()?.binding?.btnLike?.requestFocus() == true
+
+    fun requestFocusCoin(): Boolean = holderRef?.get()?.binding?.btnCoin?.requestFocus() == true
+
+    fun requestFocusFav(): Boolean = holderRef?.get()?.binding?.btnFav?.requestFocus() == true
+
     fun requestFocusPartsOrder(): Boolean = holderRef?.get()?.binding?.btnPartsOrder?.requestFocus() == true
 
     fun requestFocusSeasonOrder(): Boolean = holderRef?.get()?.binding?.btnSeasonOrder?.requestFocus() == true
@@ -95,6 +105,9 @@ class VideoDetailHeaderAdapter(
         primaryButtonText: String?,
         secondaryButtonText: String?,
         showActions: Boolean,
+        actionLiked: Boolean = false,
+        actionCoinCount: Int = 0,
+        actionFavored: Boolean = false,
         partsHeaderText: String?,
         partsCards: List<VideoCard>,
         partsSelectedKey: String?,
@@ -122,6 +135,9 @@ class VideoDetailHeaderAdapter(
         this.primaryButtonText = primaryButtonText
         this.secondaryButtonText = secondaryButtonText
         this.showActions = showActions
+        this.actionLiked = actionLiked
+        this.actionCoinCount = actionCoinCount
+        this.actionFavored = actionFavored
 
         this.partsHeaderText = partsHeaderText
         this.partsCards = partsCards
@@ -182,6 +198,9 @@ class VideoDetailHeaderAdapter(
             primaryButtonText = primaryButtonText,
             secondaryButtonText = secondaryButtonText,
             showActions = showActions,
+            actionLiked = actionLiked,
+            actionCoinCount = actionCoinCount,
+            actionFavored = actionFavored,
             partsHeaderText = partsHeaderText,
             partsCards = partsCards,
             partsSelectedKey = partsSelectedKey,
@@ -304,6 +323,9 @@ class VideoDetailHeaderAdapter(
             primaryButtonText: String?,
             secondaryButtonText: String?,
             showActions: Boolean,
+            actionLiked: Boolean,
+            actionCoinCount: Int,
+            actionFavored: Boolean,
             partsHeaderText: String?,
             partsCards: List<VideoCard>,
             partsSelectedKey: String?,
@@ -369,6 +391,13 @@ class VideoDetailHeaderAdapter(
             binding.btnLike.isVisible = showActions
             binding.btnCoin.isVisible = showActions
             binding.btnFav.isVisible = showActions
+            if (showActions) {
+                val activeColor = ContextCompat.getColorStateList(binding.root.context, blbl.cat3399.R.color.blbl_blue)
+                val inactiveColor = ContextCompat.getColorStateList(binding.root.context, blbl.cat3399.R.color.blbl_text_secondary)
+                binding.ivLike.imageTintList = if (actionLiked) activeColor else inactiveColor
+                binding.ivCoin.imageTintList = if (actionCoinCount > 0) activeColor else inactiveColor
+                binding.ivFav.imageTintList = if (actionFavored) activeColor else inactiveColor
+            }
 
             val safePartsHeader = partsHeaderText?.trim()?.takeIf { it.isNotBlank() }
             val showParts = safePartsHeader != null && partsCards.isNotEmpty()

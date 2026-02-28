@@ -52,6 +52,14 @@
             android:screenOrientation="sensorLandscape" />
 
         <activity
+            android:name=".feature.video.RegionDetailActivity"
+            android:screenOrientation="sensorLandscape" />
+
+        <activity
+            android:name=".feature.tag.TagDetailActivity"
+            android:screenOrientation="sensorLandscape" />
+
+        <activity
             android:name=".feature.my.BangumiDetailActivity"
             android:screenOrientation="sensorLandscape" />
 

@@ -154,6 +154,45 @@ internal object VideoApi {
         return withContext(Dispatchers.Default) { parseVideoCards(archives) }
     }
 
+    suspend fun dynamicTag(
+        rid: Int,
+        tagId: Long,
+        pn: Int = 1,
+        ps: Int = 20,
+    ): BiliApi.HasMorePage<VideoCard> {
+        val safeRid = rid.takeIf { it > 0 } ?: error("dynamic_tag_invalid_rid")
+        val safeTagId = tagId.takeIf { it > 0L } ?: error("dynamic_tag_invalid_tag_id")
+        val safePn = pn.coerceAtLeast(1)
+        val safePs = ps.coerceIn(1, 50)
+
+        val url =
+            BiliClient.withQuery(
+                "https://api.bilibili.com/x/web-interface/dynamic/tag",
+                mapOf(
+                    "rid" to safeRid.toString(),
+                    "tag_id" to safeTagId.toString(),
+                    "pn" to safePn.toString(),
+                    "ps" to safePs.toString(),
+                ),
+            )
+        val json = BiliClient.getJson(url)
+        val code = json.optInt("code", 0)
+        if (code != 0) {
+            val msg = json.optString("message", json.optString("msg", ""))
+            throw BiliApiException(apiCode = code, apiMessage = msg)
+        }
+
+        val data = json.optJSONObject("data") ?: JSONObject()
+        val page = data.optJSONObject("page") ?: JSONObject()
+        val total = page.optInt("count", 0).coerceAtLeast(0)
+        val pageNum = page.optInt("num", safePn).coerceAtLeast(1)
+        val pageSize = page.optInt("size", safePs).coerceAtLeast(1)
+        val archives = data.optJSONArray("archives") ?: JSONArray()
+        val items = withContext(Dispatchers.Default) { parseVideoCards(archives) }
+        val hasMore = items.isNotEmpty() && (pageNum * pageSize) < total
+        return BiliApi.HasMorePage(items = items, page = pageNum, hasMore = hasMore, total = total)
+    }
+
     suspend fun view(bvid: String): JSONObject {
         val url =
             BiliClient.withQuery(

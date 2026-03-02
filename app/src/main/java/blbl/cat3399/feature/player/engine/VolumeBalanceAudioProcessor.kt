@@ -3,6 +3,7 @@ package blbl.cat3399.feature.player.engine
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
+import androidx.media3.common.util.UnstableApi
 import blbl.cat3399.feature.player.AudioBalanceLevel
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -14,6 +15,7 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 
+@UnstableApi
 internal class VolumeBalanceAudioProcessor(
     level: AudioBalanceLevel = AudioBalanceLevel.Off,
 ) : BaseAudioProcessor() {

@@ -159,7 +159,7 @@ class LiveMessageClient(
         heartbeatTask = null
 
         heartbeatTask =
-            scheduler.scheduleAtFixedRate(
+            scheduler.scheduleWithFixedDelay(
                 {
                     val hb = "[object Object]".toByteArray(Charsets.UTF_8)
                     ws?.send(ByteString.of(*buildPacket(op = OP_HEARTBEAT, ver = 1, body = hb)))

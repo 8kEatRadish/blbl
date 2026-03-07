@@ -243,7 +243,14 @@ internal object LiveApi {
         }
 
         val streamArr = playurl.optJSONArray("stream") ?: JSONArray()
-        val protocolOrder = listOf("http_hls", "http_stream")
+        // Default behavior: prefer http_stream (flv/fmp4) for lower startup latency and better stability.
+        // Only prefer http_hls when user explicitly enables higher-bitrate live mode.
+        val protocolOrder =
+            if (highBitrateEnabled) {
+                listOf("http_hls", "http_stream")
+            } else {
+                listOf("http_stream", "http_hls")
+            }
         val formatOrderForProtocol =
             mapOf(
                 "http_stream" to listOf("flv", "fmp4", "ts"),

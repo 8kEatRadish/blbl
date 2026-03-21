@@ -377,17 +377,8 @@ internal fun PlayerActivity.smartSeek(direction: Int, showControls: Boolean, hin
     if (hintKind == SeekHintKind.Step) showSeekStepHint(direction, smartSeekTotalMs)
 }
 
-internal fun PlayerActivity.smartSeekStepMs(streak: Int): Long {
-    val baseStepsSec = intArrayOf(2, 3, 5, 7, 10, 15, 25, 35, 45)
-    val idx = (streak - 1).coerceAtLeast(0)
-    val sec =
-        if (idx < baseStepsSec.size) {
-            baseStepsSec[idx]
-        } else {
-            val extra = idx - (baseStepsSec.size - 1)
-            (baseStepsSec.last() + (10 * extra)).coerceAtMost(300)
-        }
-    return sec * 1000L
+internal fun PlayerActivity.smartSeekStepMs(_streak: Int): Long {
+    return PlayerActivity.SMART_SEEK_STEP_MS
 }
 
 internal fun PlayerActivity.startHoldSeek(direction: Int, showControls: Boolean) {

@@ -110,10 +110,10 @@
     <dimen name="player_title_meta_padding_bottom">0dp</dimen>
 
     <dimen name="player_bottom_bar_padding_v">8dp</dimen>
-    <!-- SeekBar touch target height: ~3x track thickness for easier scrubbing. -->
-    <dimen name="player_seekbar_touch_height">15dp</dimen>
-    <dimen name="player_seekbar_height">5dp</dimen>
-    <!-- SeekBar view/Thumb is 5dp; track is thinner (see player_seekbar_track_height). -->
+    <!-- SeekBar touch target height matches the larger thumb so the icon can visually fill the bar. -->
+    <dimen name="player_seekbar_touch_height">24dp</dimen>
+    <!-- SeekBar thumb icon size; track thickness is handled separately below. -->
+    <dimen name="player_seekbar_height">24dp</dimen>
     <dimen name="player_seekbar_track_height">5dp</dimen>
     <dimen name="player_seekbar_corner_radius">2.5dp</dimen>
     <dimen name="player_persistent_progress_height">2dp</dimen>
@@ -122,8 +122,8 @@
     <dimen name="player_seek_osd_margin_h">22dp</dimen>
     <dimen name="player_seek_osd_time_margin_bottom">6dp</dimen>
     <dimen name="player_seek_osd_margin_bottom">12dp</dimen>
-    <!-- With expanded SeekBar touch height, reduce bottom margin so visual gap stays the same. -->
-    <dimen name="player_seekbar_margin_bottom">6.5dp</dimen>
+    <!-- Keep the visual gap stable after increasing the SeekBar touch target. -->
+    <dimen name="player_seekbar_margin_bottom">2dp</dimen>
 
     <dimen name="player_controls_row_height">70dp</dimen>
     <dimen name="player_controls_row_margin_start">16dp</dimen>

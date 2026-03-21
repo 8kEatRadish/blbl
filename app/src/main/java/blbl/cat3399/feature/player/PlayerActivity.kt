@@ -2237,6 +2237,14 @@ class PlayerActivity : BaseActivity() {
     }
 
     internal fun cancelPlayUrlAutoRefresh(reason: String) {
+        // Media3 enforces single-thread access (player is created/accessed on main).
+        // Ensure cancel/token mutation happens on main to avoid races with the auto-refresh job.
+        if (Thread.currentThread() !== Looper.getMainLooper().thread) {
+            lifecycleScope.launch(Dispatchers.Main.immediate) {
+                cancelPlayUrlAutoRefresh(reason = reason)
+            }
+            return
+        }
         playUrlAutoRefreshJob?.cancel()
         playUrlAutoRefreshJob = null
         playUrlAutoRefreshToken++
@@ -2244,6 +2252,14 @@ class PlayerActivity : BaseActivity() {
     }
 
     internal fun schedulePlayUrlAutoRefresh(playable: Playable, reason: String) {
+        // Media3/ExoPlayer requires all player access on the thread that created it (main).
+        // Auto refresh used to run on Dispatchers.Default and crashed after the signed URL expired (~120min).
+        if (Thread.currentThread() !== Looper.getMainLooper().thread) {
+            lifecycleScope.launch(Dispatchers.Main.immediate) {
+                schedulePlayUrlAutoRefresh(playable = playable, reason = reason)
+            }
+            return
+        }
         if (exitCleanupRequested || isFinishing || isDestroyed) return
         val exo = player ?: return
 
@@ -2281,7 +2297,7 @@ class PlayerActivity : BaseActivity() {
         )
 
         playUrlAutoRefreshJob =
-            lifecycleScope.launch(Dispatchers.Default) {
+            lifecycleScope.launch(Dispatchers.Main.immediate) {
                 delay(delayMs)
                 if (token != playUrlAutoRefreshToken) return@launch
                 val exo2 = player ?: return@launch
@@ -2732,6 +2748,13 @@ class PlayerActivity : BaseActivity() {
     }
 
     internal fun reloadStream(keepPosition: Boolean, resetConstraints: Boolean = true, autoPlay: Boolean = true) {
+        // Defensive: Player/ExoPlayer must only be accessed on main thread.
+        if (Thread.currentThread() !== Looper.getMainLooper().thread) {
+            lifecycleScope.launch(Dispatchers.Main.immediate) {
+                reloadStream(keepPosition = keepPosition, resetConstraints = resetConstraints, autoPlay = autoPlay)
+            }
+            return
+        }
         val engine = player ?: return
         val cid = currentCid
         val bvid = currentBvid

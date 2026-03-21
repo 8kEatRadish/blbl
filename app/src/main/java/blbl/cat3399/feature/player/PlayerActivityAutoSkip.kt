@@ -82,6 +82,7 @@ internal fun PlayerActivity.updateProgressUi() {
     val markerDurationMs = exo.duration.takeIf { it > 0 } ?: currentViewDurationMs ?: 0L
     maybeUpdateAutoSkipSegmentMarkers(durationMs = markerDurationMs)
     maybeTickAutoSkipSegments(posMs = pos)
+    updateBufferingOverlay()
 }
 
 internal fun PlayerActivity.cancelPendingAutoResume(reason: String) {

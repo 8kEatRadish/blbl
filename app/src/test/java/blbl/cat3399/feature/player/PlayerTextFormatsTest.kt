@@ -5,6 +5,16 @@ import org.junit.Test
 
 class PlayerTextFormatsTest {
     @Test
+    fun formatTransferBytes_should_use_kb_for_small_values() {
+        assertEquals("1.5KB", formatTransferBytes(1536))
+    }
+
+    @Test
+    fun formatTransferBytes_should_use_mb_for_larger_values() {
+        assertEquals("1.5MB", formatTransferBytes(1572864))
+    }
+
+    @Test
     fun pickAudioIdByPreference_should_keep_exact_match_when_available() {
         val picked = pickAudioIdByPreference(availableAudioIds = listOf(30250, 30280, 30232), desiredAudioId = 30250)
         assertEquals(30250, picked)

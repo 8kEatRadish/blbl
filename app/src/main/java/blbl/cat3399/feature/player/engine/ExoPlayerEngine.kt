@@ -61,6 +61,7 @@ internal class ExoPlayerEngine(
     context: Context,
     private val okHttpClient: OkHttpClient = BiliClient.cdnOkHttp,
     private val onTransferHost: ((kind: DebugStreamKind, host: String) -> Unit)? = null,
+    private val onBytesTransferred: ((kind: DebugStreamKind, bytesTransferred: Long) -> Unit)? = null,
     private val onLiveHlsDebugInfo: ((LiveHlsDebugInfo) -> Unit)? = null,
     audioBalanceLevel: AudioBalanceLevel = AudioBalanceLevel.Off,
 ) : BlblPlayerEngine {
@@ -225,7 +226,10 @@ internal class ExoPlayerEngine(
                     onTransferHost?.invoke(kind, host.lowercase(Locale.US))
                 }
 
-                override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytesTransferred: Int) {}
+                override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
+                    if (!isNetwork || bytesTransferred <= 0) return
+                    onBytesTransferred?.invoke(kind, bytesTransferred.toLong())
+                }
 
                 override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
             }

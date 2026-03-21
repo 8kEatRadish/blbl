@@ -423,6 +423,7 @@ internal object PlayerUiMode {
                 binding.tvSeekHint.layoutParams = lp
             }
         }
+        applyBufferingOverlaySizing(binding = binding, scaledPx = ::scaledPx, scaledPxF = ::scaledPxF)
     }
 
     fun applyLive(activity: Activity, binding: ActivityPlayerBinding) {
@@ -552,6 +553,45 @@ internal object PlayerUiMode {
             binding.tvSeekHint.paddingBottom != hintPadV
         ) {
             binding.tvSeekHint.setPadding(hintPadH, hintPadV, hintPadH, hintPadV)
+        }
+        applyBufferingOverlaySizing(binding = binding, scaledPx = ::scaledPx, scaledPxF = ::scaledPxF)
+    }
+
+    private fun applyBufferingOverlaySizing(
+        binding: ActivityPlayerBinding,
+        scaledPx: (Int) -> Int,
+        scaledPxF: (Int) -> Float,
+    ) {
+        val padH = scaledPx(R.dimen.player_buffering_padding_h)
+        val padV = scaledPx(R.dimen.player_buffering_padding_v)
+        if (
+            binding.bufferingOverlay.paddingLeft != padH ||
+            binding.bufferingOverlay.paddingRight != padH ||
+            binding.bufferingOverlay.paddingTop != padV ||
+            binding.bufferingOverlay.paddingBottom != padV
+        ) {
+            binding.bufferingOverlay.setPadding(padH, padV, padH, padV)
+        }
+
+        (binding.progressBuffering.layoutParams as? MarginLayoutParams)?.let { lp ->
+            val size = scaledPx(R.dimen.player_buffering_indicator_size).coerceAtLeast(1)
+            if (lp.width != size || lp.height != size) {
+                lp.width = size
+                lp.height = size
+                binding.progressBuffering.layoutParams = lp
+            }
+        }
+
+        binding.tvBuffering.setTextSize(
+            TypedValue.COMPLEX_UNIT_PX,
+            scaledPxF(R.dimen.player_buffering_text_size),
+        )
+        (binding.tvBuffering.layoutParams as? MarginLayoutParams)?.let { lp ->
+            val mt = scaledPx(R.dimen.player_buffering_text_margin_top)
+            if (lp.topMargin != mt) {
+                lp.topMargin = mt
+                binding.tvBuffering.layoutParams = lp
+            }
         }
     }
 

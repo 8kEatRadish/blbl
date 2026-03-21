@@ -492,6 +492,9 @@ class PlayerActivity : BaseActivity() {
 
     internal var trace: PlaybackTrace? = null
     internal var traceFirstFrameLogged: Boolean = false
+    internal val bufferingSpeedMeter: BufferingSpeedMeter = BufferingSpeedMeter()
+    @Volatile internal var bufferingSpeedTrackingEnabled: Boolean = false
+    internal var bufferingStateStartedAtMs: Long = 0L
 
     private fun requestDecoderReleaseOnStop(reason: String) {
         if (reason.isBlank()) return
@@ -643,6 +646,7 @@ class PlayerActivity : BaseActivity() {
         binding.bottomBar.visibility = View.GONE
         binding.progressPersistentBottom.max = SEEK_MAX
         updatePersistentBottomProgressBarVisibility()
+        resetBufferingOverlayState()
         binding.tvSeekHint.visibility = View.GONE
         binding.btnBack.setOnClickListener { finish() }
         // Touch-only back button: keep click, but never allow DPAD focus.
@@ -787,6 +791,9 @@ class PlayerActivity : BaseActivity() {
                                 DebugStreamKind.MAIN -> debug.videoTransferHost = host
                             }
                         },
+                        onBytesTransferred = { _, bytes ->
+                            recordBufferingTransferBytes(bytes)
+                        },
                     )
                 }
             }
@@ -810,6 +817,7 @@ class PlayerActivity : BaseActivity() {
         engine.addListener(
             object : BlblPlayerEngine.Listener {
                 override fun onPlayerError(error: Throwable) {
+                    resetBufferingOverlayState()
                     if (shouldSuppressPlayerError(error)) return
                     AppLog.e("Player", "onPlayerError", error)
                     val playbackException = error as? PlaybackException
@@ -869,6 +877,15 @@ class PlayerActivity : BaseActivity() {
                     trace?.log("player:state", "state=$state pos=${engine.currentPosition}ms")
                     if (playbackState == Player.STATE_BUFFERING && debug.lastPlaybackState != Player.STATE_BUFFERING && engine.playWhenReady) {
                         debug.rebufferCount++
+                    }
+                    if (playbackState == Player.STATE_BUFFERING) {
+                        if (debug.lastPlaybackState != Player.STATE_BUFFERING) {
+                            bufferingStateStartedAtMs = SystemClock.elapsedRealtime()
+                            bufferingSpeedMeter.reset()
+                        }
+                        bufferingSpeedTrackingEnabled = true
+                    } else {
+                        resetBufferingOverlayState()
                     }
                     debug.lastPlaybackState = playbackState
                     if (playbackState == Player.STATE_READY && resumeExpiredUrlReloadArmed) {

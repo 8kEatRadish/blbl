@@ -137,6 +137,11 @@
     <dimen name="player_seek_hint_padding_h">14dp</dimen>
     <dimen name="player_seek_hint_padding_v">10dp</dimen>
     <dimen name="player_seek_hint_text_size">22sp</dimen>
+    <dimen name="player_buffering_padding_h">20dp</dimen>
+    <dimen name="player_buffering_padding_v">16dp</dimen>
+    <dimen name="player_buffering_indicator_size">40dp</dimen>
+    <dimen name="player_buffering_text_margin_top">12dp</dimen>
+    <dimen name="player_buffering_text_size">20sp</dimen>
 
     <dimen name="player_videoshot_preview_width_small">128dp</dimen>
     <dimen name="player_videoshot_preview_height_small">72dp</dimen>

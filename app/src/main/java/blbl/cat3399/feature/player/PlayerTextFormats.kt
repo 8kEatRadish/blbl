@@ -156,3 +156,14 @@ internal fun formatHms(ms: Long): String {
         String.format(Locale.US, "%02d:%02d", m, s)
     }
 }
+
+internal fun formatTransferBytes(bytes: Long): String {
+    val b = bytes.coerceAtLeast(0L)
+    if (b < 1024L) return "${b}B"
+    val kb = b / 1024.0
+    if (kb < 1024.0) return String.format(Locale.US, "%.1fKB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024.0) return String.format(Locale.US, "%.1fMB", mb)
+    val gb = mb / 1024.0
+    return String.format(Locale.US, "%.2fGB", gb)
+}

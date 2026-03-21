@@ -42,6 +42,45 @@
         app:layout_constraintStart_toStartOf="@id/player_view"
         app:layout_constraintTop_toTopOf="@id/player_view" />
 
+    <LinearLayout
+        android:id="@+id/buffering_overlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@color/player_overlay_bg"
+        android:clickable="false"
+        android:focusable="false"
+        android:gravity="center_horizontal"
+        android:importantForAccessibility="no"
+        android:orientation="vertical"
+        android:paddingHorizontal="@dimen/player_buffering_padding_h"
+        android:paddingVertical="@dimen/player_buffering_padding_v"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/player_view"
+        app:layout_constraintEnd_toEndOf="@id/player_view"
+        app:layout_constraintStart_toStartOf="@id/player_view"
+        app:layout_constraintTop_toTopOf="@id/player_view">
+
+        <ProgressBar
+            android:id="@+id/progress_buffering"
+            style="?android:attr/progressBarStyleLarge"
+            android:layout_width="@dimen/player_buffering_indicator_size"
+            android:layout_height="@dimen/player_buffering_indicator_size"
+            android:indeterminate="true"
+            android:indeterminateTint="?attr/colorOnSurface"
+            android:indeterminateTintMode="src_in" />
+
+        <TextView
+            android:id="@+id/tv_buffering"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/player_buffering_text_margin_top"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/player_loading"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="@dimen/player_buffering_text_size" />
+    </LinearLayout>
+
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/top_bar"
         android:layout_width="0dp"

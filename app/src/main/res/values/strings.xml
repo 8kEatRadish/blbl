@@ -89,6 +89,8 @@
     <string name="player_comment_sort">排序</string>
     <string name="player_comment_sort_hot">热门</string>
     <string name="player_comment_sort_new">最新</string>
+    <string name="player_loading">加载中</string>
+    <string name="player_loading_speed">加载中 %1$s/s</string>
     <string name="player_comment_loading">加载中…</string>
     <string name="player_comment_empty">暂无评论</string>
     <string name="player_comment_thread_empty">暂无更多回复</string>

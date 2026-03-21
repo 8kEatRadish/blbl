@@ -9,10 +9,28 @@ internal data class PlayerCustomShortcut(
     val action: PlayerCustomShortcutAction,
 )
 
+internal enum class PlayerCustomShortcutOpenVideoListTarget(
+    val value: String,
+) {
+    AUTO("auto"),
+    PAGE("page"),
+    PARTS("parts"),
+    RECOMMEND("recommend"),
+    ;
+
+    companion object {
+        fun fromValueOrNull(raw: String?): PlayerCustomShortcutOpenVideoListTarget? {
+            return entries.firstOrNull { it.value == raw?.trim()?.lowercase() }
+        }
+    }
+}
+
 internal sealed class PlayerCustomShortcutAction(
     val type: String,
 ) {
-    object OpenVideoList : PlayerCustomShortcutAction(TYPE_OPEN_VIDEO_LIST)
+    data class OpenVideoList(
+        val target: PlayerCustomShortcutOpenVideoListTarget,
+    ) : PlayerCustomShortcutAction(TYPE_OPEN_VIDEO_LIST)
 
     object OpenComments : PlayerCustomShortcutAction(TYPE_OPEN_COMMENTS)
 
@@ -222,7 +240,11 @@ internal object PlayerCustomShortcutsStore {
 
     private fun parseAction(type: String, params: JSONObject?): PlayerCustomShortcutAction? {
         return when (type) {
-            PlayerCustomShortcutAction.TYPE_OPEN_VIDEO_LIST -> PlayerCustomShortcutAction.OpenVideoList
+            PlayerCustomShortcutAction.TYPE_OPEN_VIDEO_LIST -> {
+                val target = PlayerCustomShortcutOpenVideoListTarget.fromValueOrNull(params?.optString("target"))
+                    ?: return null
+                PlayerCustomShortcutAction.OpenVideoList(target = target)
+            }
             PlayerCustomShortcutAction.TYPE_OPEN_COMMENTS -> PlayerCustomShortcutAction.OpenComments
             PlayerCustomShortcutAction.TYPE_OPEN_SETTINGS -> PlayerCustomShortcutAction.OpenSettings
             PlayerCustomShortcutAction.TYPE_TOGGLE_PLAY_PAUSE -> PlayerCustomShortcutAction.TogglePlayPause
@@ -335,7 +357,9 @@ internal object PlayerCustomShortcutsStore {
 
     private fun buildActionParams(action: PlayerCustomShortcutAction): JSONObject? {
         return when (action) {
-            PlayerCustomShortcutAction.OpenVideoList,
+            is PlayerCustomShortcutAction.OpenVideoList ->
+                JSONObject().put("target", action.target.value)
+
             PlayerCustomShortcutAction.OpenComments,
             PlayerCustomShortcutAction.OpenSettings,
             PlayerCustomShortcutAction.TogglePlayPause,

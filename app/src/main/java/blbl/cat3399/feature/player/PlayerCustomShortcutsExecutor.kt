@@ -72,8 +72,8 @@ internal fun PlayerActivity.dispatchPlayerCustomShortcutIfNeeded(event: KeyEvent
 private fun PlayerActivity.applyPlayerCustomShortcut(keyCode: Int, action: PlayerCustomShortcutAction) {
     val memory = shortcutToggleMemory()
     when (action) {
-        PlayerCustomShortcutAction.OpenVideoList -> {
-            if (!showListPanelFromShortcut()) {
+        is PlayerCustomShortcutAction.OpenVideoList -> {
+            if (!showListPanelFromShortcut(target = action.target)) {
                 showSeekHint("视频列表：暂无", hold = false)
             }
         }

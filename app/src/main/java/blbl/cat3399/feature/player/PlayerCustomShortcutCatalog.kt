@@ -2,6 +2,7 @@ package blbl.cat3399.feature.player
 
 import blbl.cat3399.core.prefs.AppPrefs
 import blbl.cat3399.core.prefs.PlayerCustomShortcutAction
+import blbl.cat3399.core.prefs.PlayerCustomShortcutOpenVideoListTarget
 import blbl.cat3399.feature.settings.SettingsText
 import java.util.Locale
 import kotlin.math.abs
@@ -25,7 +26,7 @@ internal data class PlayerCustomShortcutValuePickerConfig(
 internal object PlayerCustomShortcutCatalog {
     private val actionOptionsInternal =
         listOf(
-            PlayerCustomShortcutActionOption(PlayerCustomShortcutAction.TYPE_OPEN_VIDEO_LIST, "打开视频列表", requiresValue = false),
+            PlayerCustomShortcutActionOption(PlayerCustomShortcutAction.TYPE_OPEN_VIDEO_LIST, "打开视频列表", requiresValue = true),
             PlayerCustomShortcutActionOption(PlayerCustomShortcutAction.TYPE_OPEN_COMMENTS, "打开评论", requiresValue = false),
             PlayerCustomShortcutActionOption(PlayerCustomShortcutAction.TYPE_OPEN_SETTINGS, "打开设置", requiresValue = false),
             PlayerCustomShortcutActionOption(PlayerCustomShortcutAction.TYPE_TOGGLE_PLAY_PAUSE, "播放/暂停", requiresValue = false),
@@ -61,7 +62,6 @@ internal object PlayerCustomShortcutCatalog {
 
     fun createAction(type: String): PlayerCustomShortcutAction? {
         return when (type) {
-            PlayerCustomShortcutAction.TYPE_OPEN_VIDEO_LIST -> PlayerCustomShortcutAction.OpenVideoList
             PlayerCustomShortcutAction.TYPE_OPEN_COMMENTS -> PlayerCustomShortcutAction.OpenComments
             PlayerCustomShortcutAction.TYPE_OPEN_SETTINGS -> PlayerCustomShortcutAction.OpenSettings
             PlayerCustomShortcutAction.TYPE_TOGGLE_PLAY_PAUSE -> PlayerCustomShortcutAction.TogglePlayPause
@@ -82,7 +82,7 @@ internal object PlayerCustomShortcutCatalog {
 
     fun actionLabel(action: PlayerCustomShortcutAction): String {
         return when (action) {
-            PlayerCustomShortcutAction.OpenVideoList -> "打开视频列表"
+            is PlayerCustomShortcutAction.OpenVideoList -> "打开视频列表：${openVideoListTargetText(action.target)}"
             PlayerCustomShortcutAction.OpenComments -> "打开评论"
             PlayerCustomShortcutAction.OpenSettings -> "打开设置"
             PlayerCustomShortcutAction.TogglePlayPause -> "播放/暂停"
@@ -123,6 +123,28 @@ internal object PlayerCustomShortcutCatalog {
         currentAction: PlayerCustomShortcutAction?,
     ): PlayerCustomShortcutValuePickerConfig? {
         return when (type) {
+            PlayerCustomShortcutAction.TYPE_OPEN_VIDEO_LIST -> {
+                val options =
+                    listOf(
+                        PlayerCustomShortcutOpenVideoListTarget.AUTO,
+                        PlayerCustomShortcutOpenVideoListTarget.PAGE,
+                        PlayerCustomShortcutOpenVideoListTarget.PARTS,
+                        PlayerCustomShortcutOpenVideoListTarget.RECOMMEND,
+                    )
+                val current = (currentAction as? PlayerCustomShortcutAction.OpenVideoList)?.target
+                val checked = options.indexOf(current).takeIf { it >= 0 } ?: 0
+                PlayerCustomShortcutValuePickerConfig(
+                    choices =
+                        options.map { target ->
+                            PlayerCustomShortcutValueChoice(
+                                label = openVideoListTargetText(target),
+                                action = PlayerCustomShortcutAction.OpenVideoList(target = target),
+                            )
+                        },
+                    checkedIndex = checked,
+                )
+            }
+
             PlayerCustomShortcutAction.TYPE_SET_PLAYBACK_SPEED -> {
                 val options = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 4.0f)
                 val current = (currentAction as? PlayerCustomShortcutAction.SetPlaybackSpeed)?.speed
@@ -260,8 +282,17 @@ internal object PlayerCustomShortcutCatalog {
             }
 
             else -> null
-        }
     }
+}
+
+private fun openVideoListTargetText(target: PlayerCustomShortcutOpenVideoListTarget): String {
+    return when (target) {
+        PlayerCustomShortcutOpenVideoListTarget.AUTO -> "自动"
+        PlayerCustomShortcutOpenVideoListTarget.PAGE -> "视频列表"
+        PlayerCustomShortcutOpenVideoListTarget.PARTS -> "合集/分P"
+        PlayerCustomShortcutOpenVideoListTarget.RECOMMEND -> "推荐"
+    }
+}
 
     private fun playbackModeText(code: String): String = SettingsText.playbackModeText(code)
 }

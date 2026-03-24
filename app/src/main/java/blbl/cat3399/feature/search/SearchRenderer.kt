@@ -338,7 +338,7 @@ class SearchRenderer(
         )
 
         binding.btnClear.setOnClickListener {
-            interactor.setQuery("")
+            cleanQuery()
         }
         binding.btnClear.setOnKeyListener { _, keyCode, event ->
             if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
@@ -390,6 +390,10 @@ class SearchRenderer(
         updateQueryUi()
         updateMiddleUi(history = emptyList(), extra = emptyList())
         updateClearHistoryButton(state.query)
+    }
+
+    fun cleanQuery(){
+        interactor.setQuery("")
     }
 
     private fun setupQueryInput() {

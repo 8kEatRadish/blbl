@@ -78,6 +78,8 @@ class SearchFragment : Fragment(), BackPressHandler, RefreshKeyHandler {
             // Returning from Bangumi/Media detail uses add+hide, so SearchFragment won't get onResume().
             // Re-run the minimal "shown again" hooks to restore focus and other pending UI actions.
             renderer?.onShown()
+        }else{
+            renderer?.cleanQuery()
         }
     }
 

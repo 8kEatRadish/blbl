@@ -123,12 +123,12 @@ class MainActivity : BaseActivity(), SidebarFocusHost {
         (binding.recyclerSidebar.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         navAdapter.submit(
             listOf(
-                SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_SEARCH, getString(R.string.tab_search), R.drawable.ic_nav_search),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_HOME, getString(R.string.tab_recommend), R.drawable.ic_nav_home),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_CATEGORY, getString(R.string.tab_category), R.drawable.ic_nav_category),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_DYNAMIC, getString(R.string.tab_dynamic), R.drawable.ic_nav_dynamic),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_LIVE, getString(R.string.tab_live), R.drawable.ic_nav_live),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_MY, getString(R.string.tab_my), R.drawable.ic_nav_my),
+                SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_SEARCH, getString(R.string.tab_search), R.drawable.ic_nav_search),
             ),
             selectedId = initialSelectedNavId,
         )

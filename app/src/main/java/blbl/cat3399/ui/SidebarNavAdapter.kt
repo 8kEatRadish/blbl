@@ -22,7 +22,7 @@ class SidebarNavAdapter(
 
     private val items = ArrayList<NavItem>()
     private var selectedId: Int = ID_HOME
-    private var showLabelsAlways: Boolean = false
+    private var showLabelsAlways: Boolean = true
 
     fun submit(list: List<NavItem>, selectedId: Int) {
         items.clear()

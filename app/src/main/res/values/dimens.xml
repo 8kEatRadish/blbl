@@ -5,7 +5,7 @@
 
     <!-- Sidebar (baseline 1080p@1.5) -->
     <dimen name="sidebar_width">77dp</dimen>
-    <dimen name="sidebar_user_size">48dp</dimen>
+    <dimen name="sidebar_user_size">40dp</dimen>
     <dimen name="sidebar_user_margin_top">12dp</dimen>
     <dimen name="sidebar_login_size">56dp</dimen>
     <dimen name="sidebar_login_margin_top">12dp</dimen>

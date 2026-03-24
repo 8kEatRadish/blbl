@@ -21,13 +21,15 @@
         <blbl.cat3399.core.ui.UserScaleTabLayout
             android:id="@+id/tab_layout"
             style="@style/Widget.Blbl.TabLayout"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="?attr/colorBackground"
             android:focusable="false"
             app:tabBackground="?attr/blblFocusBgRound"
             app:tabIndicatorColor="?attr/blblAccent"
             app:tabSelectedTextColor="?attr/colorOnSurface"
+            android:layout_marginLeft="30dp"
+            app:tabMode="scrollable"
             app:tabTextColor="?android:attr/textColorSecondary" />
     </LinearLayout>
 

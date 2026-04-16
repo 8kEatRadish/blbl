@@ -9,7 +9,6 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.recyclerview.widget.SimpleItemAnimator
 import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
@@ -19,6 +18,7 @@ import blbl.cat3399.core.ui.AppToast
 import blbl.cat3399.core.ui.DpadGridController
 import blbl.cat3399.core.ui.FocusTreeUtils
 import blbl.cat3399.core.ui.TabSwitchFocusTarget
+import blbl.cat3399.core.ui.applyTvPerformanceDefaults
 import blbl.cat3399.core.ui.postIfAlive
 import blbl.cat3399.core.ui.postIfAttached
 import blbl.cat3399.core.ui.requestFocusAdapterPositionReliable
@@ -70,9 +70,8 @@ class PgcRecommendGridFragment : Fragment(), RefreshKeyHandler, TabSwitchFocusTa
         }
 
         binding.recycler.adapter = adapter
-        binding.recycler.setHasFixedSize(true)
         binding.recycler.layoutManager = GridLayoutManager(requireContext(), spanCountForPgc())
-        (binding.recycler.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+        binding.recycler.applyTvPerformanceDefaults()
         binding.recycler.clearOnScrollListeners()
         dpadGridController?.release()
         dpadGridController =

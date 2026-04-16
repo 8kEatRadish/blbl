@@ -6,6 +6,8 @@ import android.os.SystemClock
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.app.ActivityOptionsCompat
+import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -22,6 +24,7 @@ import blbl.cat3399.core.ui.DpadGridController
 import blbl.cat3399.core.ui.FocusTreeUtils
 import blbl.cat3399.core.ui.GridSpanPolicy
 import blbl.cat3399.core.ui.TabSwitchFocusTarget
+import blbl.cat3399.core.ui.applyTvPerformanceDefaults
 import blbl.cat3399.core.ui.postIfAlive
 import blbl.cat3399.core.ui.postIfAttached
 import blbl.cat3399.core.ui.requestFocusAdapterPositionReliable
@@ -113,13 +116,32 @@ class VideoGridFragment : Fragment(), RefreshKeyHandler, TabSwitchFocusTarget {
                                     .putExtra(VideoDetailActivity.EXTRA_PLAYLIST_INDEX, pos),
                             )
                         } else {
-                            startActivity(
+                            val transitionName = buildPlayerSharedElementName(card)
+                            val intent =
                                 Intent(requireContext(), PlayerActivity::class.java)
                                     .putExtra(PlayerActivity.EXTRA_BVID, card.bvid)
                                     .putExtra(PlayerActivity.EXTRA_CID, card.cid ?: -1L)
                                     .putExtra(PlayerActivity.EXTRA_PLAYLIST_TOKEN, token)
-                                    .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos),
-                            )
+                                    .putExtra(PlayerActivity.EXTRA_PLAYLIST_INDEX, pos)
+                                    .putExtra(PlayerActivity.EXTRA_SHARED_ELEMENT_NAME, transitionName)
+
+                            val coverView =
+                                binding.recycler
+                                    .findViewHolderForAdapterPosition(pos)
+                                    ?.itemView
+                                    ?.findViewById<View>(R.id.iv_cover)
+                            if (coverView != null) {
+                                ViewCompat.setTransitionName(coverView, transitionName)
+                                val options =
+                                    ActivityOptionsCompat.makeSceneTransitionAnimation(
+                                        requireActivity(),
+                                        coverView,
+                                        transitionName,
+                                    )
+                                startActivity(intent, options.toBundle())
+                            } else {
+                                startActivity(intent)
+                            }
                         }
                     },
                     onLongClick = { card, _ ->
@@ -129,9 +151,8 @@ class VideoGridFragment : Fragment(), RefreshKeyHandler, TabSwitchFocusTarget {
                 )
         }
         binding.recycler.adapter = adapter
-        binding.recycler.setHasFixedSize(true)
         binding.recycler.layoutManager = GridLayoutManager(requireContext(), spanCountForWidth())
-        (binding.recycler.itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)?.supportsChangeAnimations = false
+        binding.recycler.applyTvPerformanceDefaults()
         binding.recycler.clearOnScrollListeners()
         binding.recycler.addOnScrollListener(
             object : RecyclerView.OnScrollListener() {
@@ -365,6 +386,13 @@ class VideoGridFragment : Fragment(), RefreshKeyHandler, TabSwitchFocusTarget {
             widthDp = widthDp,
             overrideSpanCount = BiliClient.prefs.gridSpanCount,
         )
+    }
+
+    private fun buildPlayerSharedElementName(card: VideoCard): String {
+        val bvid = card.bvid.trim().ifBlank { "na" }
+        val cid = card.cid ?: -1L
+        val aid = card.aid ?: -1L
+        return "player_cover_${bvid}_${aid}_$cid"
     }
 
     override fun requestFocusFirstCardFromTab(): Boolean {

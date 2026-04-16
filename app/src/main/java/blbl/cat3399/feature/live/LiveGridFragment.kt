@@ -21,6 +21,7 @@ import blbl.cat3399.core.ui.DpadGridController
 import blbl.cat3399.core.ui.FocusTreeUtils
 import blbl.cat3399.core.ui.GridSpanPolicy
 import blbl.cat3399.core.ui.UiScale
+import blbl.cat3399.core.ui.applyTvPerformanceDefaults
 import blbl.cat3399.core.ui.postDelayedIfAlive
 import blbl.cat3399.core.ui.postIfAlive
 import blbl.cat3399.core.ui.postIfAttached
@@ -83,9 +84,8 @@ class LiveGridFragment : Fragment(), LivePageFocusTarget, RefreshKeyHandler {
         }
 
         binding.recycler.adapter = adapter
-        binding.recycler.setHasFixedSize(true)
         binding.recycler.layoutManager = GridLayoutManager(requireContext(), spanCountForWidth())
-        (binding.recycler.itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)?.supportsChangeAnimations = false
+        binding.recycler.applyTvPerformanceDefaults()
         binding.recycler.clearOnScrollListeners()
         binding.recycler.addOnScrollListener(
             object : RecyclerView.OnScrollListener() {

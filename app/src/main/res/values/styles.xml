@@ -17,6 +17,13 @@
         <item name="blblAccentPressed">@color/blbl_accent_violet_pressed</item>
     </style>
 
+    <style name="ThemeOverlay.Blbl.Accent.YtRed" parent="ThemeOverlay.MaterialComponents">
+        <item name="blblAccent">@color/blbl_accent_yt_red</item>
+        <item name="blblAccentContainer">@color/blbl_accent_yt_red_container</item>
+        <item name="blblAccentWeak">@color/blbl_accent_yt_red_weak</item>
+        <item name="blblAccentPressed">@color/blbl_accent_yt_red_pressed</item>
+    </style>
+
     <style name="ThemeOverlay.Blbl.Accent.TvPink" parent="ThemeOverlay.MaterialComponents">
         <item name="blblAccent">@color/blbl_accent_tv_pink</item>
         <item name="blblAccentContainer">@color/blbl_accent_tv_pink_container</item>
@@ -66,7 +73,8 @@
     </style>
 
     <style name="TextAppearance.Blbl.Tab" parent="TextAppearance.MaterialComponents.Button">
-        <item name="android:textSize">21sp</item>
+        <item name="android:textSize">23sp</item>
+        <item name="android:textStyle">bold</item>
     </style>
 
     <style name="Widget.Blbl.TabLayout" parent="Widget.MaterialComponents.TabLayout">

@@ -3,8 +3,8 @@ package blbl.cat3399.ui
 import android.content.res.ColorStateList
 import android.os.SystemClock
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
+import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
 import blbl.cat3399.R
 import blbl.cat3399.core.log.AppLog
@@ -23,6 +23,10 @@ class SidebarNavAdapter(
     private val items = ArrayList<NavItem>()
     private var selectedId: Int = ID_HOME
     private var showLabelsAlways: Boolean = true
+
+    init {
+        setHasStableIds(true)
+    }
 
     fun submit(list: List<NavItem>, selectedId: Int) {
         items.clear()
@@ -51,8 +55,8 @@ class SidebarNavAdapter(
 
         val prevPos = items.indexOfFirst { it.id == prevId }
         val newPos = items.indexOfFirst { it.id == id }
-        if (prevPos >= 0) notifyItemChanged(prevPos)
-        if (newPos >= 0) notifyItemChanged(newPos)
+        if (prevPos >= 0) notifyItemChanged(prevPos, PAYLOAD_SELECTION)
+        if (newPos >= 0) notifyItemChanged(newPos, PAYLOAD_SELECTION)
 
         if (trigger) items.firstOrNull { it.id == id }?.let { onClick(it) }
     }
@@ -63,6 +67,8 @@ class SidebarNavAdapter(
         val binding = ItemSidebarNavBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return Vh(binding)
     }
+
+    override fun getItemId(position: Int): Long = items[position].id.toLong()
 
     override fun onBindViewHolder(holder: Vh, position: Int) {
         val item = items[position]
@@ -77,6 +83,16 @@ class SidebarNavAdapter(
         }
     }
 
+    override fun onBindViewHolder(holder: Vh, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isEmpty()) {
+            onBindViewHolder(holder, position)
+            return
+        }
+        val item = items[position]
+        val selected = item.id == selectedId
+        holder.bindSelectionState(selected, showLabelsAlways)
+    }
+
     override fun getItemCount(): Int = items.size
 
     class Vh(private val binding: ItemSidebarNavBinding) : RecyclerView.ViewHolder(binding.root) {
@@ -88,19 +104,35 @@ class SidebarNavAdapter(
         ) {
             binding.ivIcon.setImageResource(item.iconRes)
             binding.tvLabel.text = item.title
-            binding.tvLabel.visibility = if (showLabelsAlways || selected) View.VISIBLE else View.GONE
+            bindSelectionState(selected, showLabelsAlways)
+            binding.root.setOnClickListener { onClick() }
+        }
+
+        fun bindSelectionState(
+            selected: Boolean,
+            showLabelsAlways: Boolean,
+        ) {
+            binding.tvLabel.isVisible = showLabelsAlways || selected
             val ctx = binding.root.context
             binding.card.setCardBackgroundColor(
-                if (selected) ThemeColor.resolve(ctx, R.attr.blblAccentContainer, R.color.blbl_surface) else 0x00000000,
+                if (selected) ThemeColor.resolve(ctx, R.attr.blblAccent, R.color.blbl_accent_yt_red) else 0x00000000,
             )
             binding.card.isSelected = selected
+            binding.card.isActivated = selected
             val iconTint =
                 if (selected) {
-                    ThemeColor.resolve(ctx, R.attr.blblAccent, R.color.blbl_purple)
+                    ThemeColor.resolve(ctx, com.google.android.material.R.attr.colorOnSecondary, android.R.color.white)
                 } else {
                     ThemeColor.resolve(ctx, android.R.attr.textColorSecondary, R.color.blbl_text_secondary)
                 }
             binding.ivIcon.imageTintList = ColorStateList.valueOf(iconTint)
+            val labelColor =
+                if (selected) {
+                    ThemeColor.resolve(ctx, com.google.android.material.R.attr.colorOnSecondary, android.R.color.white)
+                } else {
+                    ThemeColor.resolve(ctx, com.google.android.material.R.attr.colorOnSurface, R.color.blbl_text)
+                }
+            binding.tvLabel.setTextColor(labelColor)
 
             val heightRes =
                 when {
@@ -114,11 +146,12 @@ class SidebarNavAdapter(
                 lp.height = heightPx
                 binding.card.layoutParams = lp
             }
-            binding.root.setOnClickListener { onClick() }
         }
     }
 
     companion object {
+        private const val PAYLOAD_SELECTION = "payload_selection"
+
         const val ID_SEARCH = 0
         const val ID_HOME = 1
         const val ID_CATEGORY = 2

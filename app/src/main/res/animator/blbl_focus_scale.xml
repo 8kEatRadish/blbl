@@ -3,28 +3,44 @@
     <item android:state_focused="true">
         <set>
             <objectAnimator
-                android:duration="120"
+                android:duration="170"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
                 android:propertyName="scaleX"
-                android:valueTo="1.04"
+                android:valueTo="1.07"
                 android:valueType="floatType" />
             <objectAnimator
-                android:duration="120"
+                android:duration="170"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
                 android:propertyName="scaleY"
-                android:valueTo="1.04"
+                android:valueTo="1.07"
+                android:valueType="floatType" />
+            <objectAnimator
+                android:duration="170"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="translationZ"
+                android:valueTo="18"
                 android:valueType="floatType" />
         </set>
     </item>
     <item>
         <set>
             <objectAnimator
-                android:duration="120"
+                android:duration="150"
+                android:interpolator="@android:interpolator/fast_out_linear_in"
                 android:propertyName="scaleX"
                 android:valueTo="1.0"
                 android:valueType="floatType" />
             <objectAnimator
-                android:duration="120"
+                android:duration="150"
+                android:interpolator="@android:interpolator/fast_out_linear_in"
                 android:propertyName="scaleY"
                 android:valueTo="1.0"
+                android:valueType="floatType" />
+            <objectAnimator
+                android:duration="150"
+                android:interpolator="@android:interpolator/fast_out_linear_in"
+                android:propertyName="translationZ"
+                android:valueTo="0"
                 android:valueType="floatType" />
         </set>
     </item>

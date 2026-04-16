@@ -59,10 +59,7 @@ object AppToast {
         view.isFocusable = false
         view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
 
-        view.findViewById<ImageView>(R.id.iv_app_icon).setImageDrawable(
-            runCatching { root.context.applicationInfo.loadIcon(root.context.packageManager) }
-                .getOrElse { root.context.getDrawable(R.mipmap.ic_launcher) },
-        )
+        view.findViewById<ImageView>(R.id.iv_app_icon).setImageResource(R.drawable.ic_logo_splash)
 
         val tvText = view.findViewById<TextView>(R.id.tv_text)
         tvText.text = text

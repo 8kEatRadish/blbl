@@ -15,6 +15,7 @@ import com.google.android.material.tabs.TabLayoutMediator
 import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.core.model.Zone
 import blbl.cat3399.core.net.BiliClient
+import blbl.cat3399.core.ui.applyTvPerformanceDefaults
 import blbl.cat3399.core.ui.enableDpadTabFocus
 import blbl.cat3399.core.ui.postDelayedIfAlive
 import blbl.cat3399.core.ui.postIfAlive
@@ -55,11 +56,12 @@ class CategoryFragment : Fragment(), VideoGridTabSwitchFocusHost, BackPressHandl
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         binding.viewPager.adapter = CategoryPagerAdapter(this, zones)
+        binding.viewPager.applyTvPerformanceDefaults(pageCacheLimit = 1)
         AppLog.d(
             "Category",
             "pager init count=${zones.size} offscreen=${binding.viewPager.offscreenPageLimit} t=${SystemClock.uptimeMillis()}",
         )
-        TabLayoutMediator(binding.tabLayout, binding.viewPager) { tab, position ->
+        TabLayoutMediator(binding.tabLayout, binding.viewPager, true, false) { tab, position ->
             tab.text = zones[position].title
         }.attach()
         binding.tabLayout.addOnTabSelectedListener(

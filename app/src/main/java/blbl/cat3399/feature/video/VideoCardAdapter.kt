@@ -1,9 +1,12 @@
 package blbl.cat3399.feature.video
 
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.MarginLayoutParams
 import androidx.core.view.isVisible
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import blbl.cat3399.R
 import blbl.cat3399.core.image.ImageLoader
@@ -12,6 +15,7 @@ import blbl.cat3399.core.model.VideoCard
 import blbl.cat3399.core.ui.cloneInUserScale
 import blbl.cat3399.core.util.Format
 import blbl.cat3399.databinding.ItemVideoCardBinding
+import java.util.concurrent.Executors
 
 class VideoCardAdapter(
     private val onClick: (VideoCard, Int) -> Unit,
@@ -22,6 +26,9 @@ class VideoCardAdapter(
     private val isSelected: ((VideoCard, Int) -> Boolean)? = null,
 ) : RecyclerView.Adapter<VideoCardAdapter.Vh>() {
     private val items = ArrayList<VideoCard>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile
+    private var submitGeneration: Int = 0
 
     init {
         setHasStableIds(true)
@@ -33,13 +40,58 @@ class VideoCardAdapter(
     }
 
     fun submit(list: List<VideoCard>) {
-        items.clear()
-        items.addAll(list)
-        notifyDataSetChanged()
+        val generation = ++submitGeneration
+
+        if (items.isEmpty()) {
+            if (list.isEmpty()) return
+            items.clear()
+            items.addAll(list)
+            notifyItemRangeInserted(0, list.size)
+            return
+        }
+        if (list.isEmpty()) {
+            val oldSize = items.size
+            if (oldSize <= 0) return
+            items.clear()
+            notifyItemRangeRemoved(0, oldSize)
+            return
+        }
+
+        val oldItems = items.toList()
+        val newItems = list.toList()
+        diffExecutor.execute {
+            val diff =
+                DiffUtil.calculateDiff(
+                    object : DiffUtil.Callback() {
+                        override fun getOldListSize(): Int = oldItems.size
+
+                        override fun getNewListSize(): Int = newItems.size
+
+                        override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+                            val oldItem = oldItems[oldItemPosition]
+                            val newItem = newItems[newItemPosition]
+                            return oldItem.stableKey() == newItem.stableKey()
+                        }
+
+                        override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+                            return oldItems[oldItemPosition] == newItems[newItemPosition]
+                        }
+                    },
+                    false,
+                )
+            mainHandler.post {
+                if (generation != submitGeneration) return@post
+                items.clear()
+                items.addAll(newItems)
+                diff.dispatchUpdatesTo(this@VideoCardAdapter)
+            }
+        }
     }
 
     fun append(list: List<VideoCard>) {
         if (list.isEmpty()) return
+        // Cancel any in-flight submit diff result; append should always win in paging flows.
+        submitGeneration++
         val start = items.size
         items.addAll(list)
         notifyItemRangeInserted(start, list.size)
@@ -72,8 +124,25 @@ class VideoCardAdapter(
         private val fixedItemWidthDimenRes: Int?,
         private val fixedItemMarginDimenRes: Int?,
     ) : RecyclerView.ViewHolder(binding.root) {
+        private val overlayShiftX: Float
+        private val overlayShiftYBase: Float
+        private var lastOverlayHeight: Int = -1
+
         init {
+            val res = binding.root.resources
+            val textMargin = res.getDimensionPixelSize(R.dimen.video_card_text_margin)
+            val padH = res.getDimensionPixelSize(R.dimen.video_card_duration_padding_h)
+            val padV = res.getDimensionPixelSize(R.dimen.video_card_duration_padding_v)
+
+            val insetX = textMargin + padH
+            overlayShiftX = -insetX * 0.5f
+            overlayShiftYBase = (textMargin + padV) * 0.2f
+
             applyFixedSizing()
+            applyOverlayTransformIfNeeded(force = true)
+            binding.root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                applyOverlayTransformIfNeeded(force = false)
+            }
         }
 
         fun bind(
@@ -132,7 +201,7 @@ class VideoCardAdapter(
                     }
             ImageLoader.loadInto(binding.ivCover, ImageUrl.cover(item.coverUrl))
 
-            applyOverlayTranslations()
+            applyOverlayTransformIfNeeded(force = false)
 
             binding.root.setOnClickListener {
                 val pos = bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION } ?: return@setOnClickListener
@@ -169,33 +238,23 @@ class VideoCardAdapter(
             }
         }
 
-        private fun applyOverlayTranslations() {
-            val res = binding.root.resources
-            val textMargin = res.getDimensionPixelSize(R.dimen.video_card_text_margin)
-            val padH = res.getDimensionPixelSize(R.dimen.video_card_duration_padding_h)
-            val padV = res.getDimensionPixelSize(R.dimen.video_card_duration_padding_v)
+        private fun applyOverlayTransformIfNeeded(force: Boolean) {
+            binding.llStats.translationX = overlayShiftX
+            binding.tvDuration.translationX = overlayShiftX
 
-            // "Closer to the left edge by 50%": the visible inset is (margin + inner padding),
-            // so shift left by 50% of that total inset (more noticeable than margin-only).
-            val insetX = textMargin + padH
-            val shiftX = -insetX * 0.5f
-            binding.llStats.translationX = shiftX
-            binding.tvDuration.translationX = shiftX
+            val overlayHeight = maxOf(binding.llStats.height, binding.tvDuration.height)
+            if (!force && overlayHeight == lastOverlayHeight) return
 
-            // "Move down 20%": apply 20% of overlay height (and a tiny baseline from margin)
-            // so the change is visible across different UI scales.
-            fun applyShiftY() {
-                val overlayH = maxOf(binding.llStats.height, binding.tvDuration.height)
-                val shiftY = (textMargin + padV) * 0.2f + overlayH * 0.2f
-                binding.llStats.translationY = shiftY
-                binding.tvDuration.translationY = shiftY
-            }
+            val shiftY = overlayShiftYBase + overlayHeight * 0.2f
+            binding.llStats.translationY = shiftY
+            binding.tvDuration.translationY = shiftY
+            lastOverlayHeight = overlayHeight
+        }
+    }
 
-            if (binding.llStats.height > 0 || binding.tvDuration.height > 0) {
-                applyShiftY()
-            } else {
-                binding.root.post { applyShiftY() }
-            }
+    companion object {
+        private val diffExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "VideoCardAdapterDiff").apply { isDaemon = true }
         }
     }
 }

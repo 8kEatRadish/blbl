@@ -15,6 +15,7 @@ import blbl.cat3399.core.model.LiveAreaParent
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.prefs.AppPrefs
 import blbl.cat3399.core.ui.enableDpadTabFocus
+import blbl.cat3399.core.ui.applyTvPerformanceDefaults
 import blbl.cat3399.core.ui.postDelayedIfAlive
 import blbl.cat3399.core.ui.postIfAlive
 import blbl.cat3399.databinding.FragmentLiveBinding
@@ -168,8 +169,9 @@ class LiveFragment : Fragment(), LiveGridTabSwitchFocusHost, BackPressHandler, L
 
         val b = binding
         b.viewPager.adapter = LivePagerAdapter(this, list)
+        b.viewPager.applyTvPerformanceDefaults(pageCacheLimit = 1)
         mediator =
-            TabLayoutMediator(b.tabLayout, b.viewPager) { tab, position ->
+            TabLayoutMediator(b.tabLayout, b.viewPager, true, false) { tab, position ->
                 tab.text = list.getOrNull(position)?.title ?: ""
             }.also { it.attach() }
 

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="blbl_bg">#141518</color>
-    <color name="blbl_surface">#1E2024</color>
-    <color name="blbl_text">#E4E4E6</color>
-    <color name="blbl_text_secondary">#8E9095</color>
+    <color name="blbl_bg">#0F1114</color>
+    <color name="blbl_surface">#1A1D22</color>
+    <color name="blbl_text">#F1F1F1</color>
+    <color name="blbl_text_secondary">#A6A8AD</color>
 
     <!-- Text/icon tint used on top of media covers with scrims/shadows (theme-independent). -->
     <color name="blbl_text_on_media">#EDEDED</color>
@@ -16,9 +16,9 @@
 
     <!-- Focus highlight: white frame + subtle shadow/overlay. -->
     <color name="blbl_focus_white">#FFFFFF</color>
-    <color name="blbl_focus_shadow">#66000000</color>
-    <color name="blbl_focus_fill">#4D333333</color>
-    <color name="blbl_focus_fill_pressed">#66333333</color>
+    <color name="blbl_focus_shadow">#99000000</color>
+    <color name="blbl_focus_fill">#33FFFFFF</color>
+    <color name="blbl_focus_fill_pressed">#4DFFFFFF</color>
 
     <!-- Accent derived colors: keep alpha variants centralized. -->
     <color name="blbl_accent_violet_container">#338A2BE2</color>
@@ -32,6 +32,10 @@
     <color name="blbl_accent_blue_container">#3300A1D6</color>
     <color name="blbl_accent_blue_weak">#6600A1D6</color>
     <color name="blbl_accent_blue_pressed">#8000A1D6</color>
+    <color name="blbl_accent_yt_red">#FF1F1F</color>
+    <color name="blbl_accent_yt_red_container">#33FF1F1F</color>
+    <color name="blbl_accent_yt_red_weak">#66FF1F1F</color>
+    <color name="blbl_accent_yt_red_pressed">#80FF1F1F</color>
     <color name="player_button_tint">#FFFFFF</color>
     <color name="blbl_purple">#8A2BE2</color>
     <color name="blbl_blue">#00A1D6</color>
@@ -41,4 +45,9 @@
     <color name="blbl_accent_tv_pink">#FB7299</color>
     <color name="blbl_pink">#FB7299</color>
     <color name="player_overlay_bg">#80000000</color>
+
+    <!-- Toast (global): dark surface + red accent + light gray text. -->
+    <color name="blbl_toast_bg">#14171C</color>
+    <color name="blbl_toast_text">#E8EAED</color>
+    <color name="blbl_toast_icon_bg">#1D2128</color>
 </resources>

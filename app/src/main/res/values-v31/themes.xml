@@ -3,7 +3,7 @@
     <style name="Theme.Blbl.Launcher.Dark" parent="Theme.Blbl.Base.Dark">
         <item name="android:windowBackground">@drawable/bg_launcher_window</item>
         <item name="android:windowSplashScreenBackground">?attr/colorBackground</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_transparent</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_logo_splash</item>
         <item name="android:windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
     </style>
 
@@ -14,7 +14,7 @@
         <item name="blblAccentPressed">@color/blbl_accent_tv_pink_pressed</item>
         <item name="android:windowBackground">@drawable/bg_launcher_window</item>
         <item name="android:windowSplashScreenBackground">?attr/colorBackground</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_transparent</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_logo_splash</item>
         <item name="android:windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
     </style>
 </resources>

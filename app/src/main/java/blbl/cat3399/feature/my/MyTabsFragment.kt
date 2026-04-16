@@ -14,6 +14,7 @@ import blbl.cat3399.core.log.AppLog
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.prefs.AppPrefs
 import blbl.cat3399.core.ui.enableDpadTabFocus
+import blbl.cat3399.core.ui.applyTvPerformanceDefaults
 import blbl.cat3399.core.ui.postIfAlive
 import blbl.cat3399.databinding.FragmentMyTabsBinding
 import blbl.cat3399.ui.BackPressHandler
@@ -36,7 +37,8 @@ class MyTabsFragment : Fragment(), MyTabContentSwitchFocusHost, BackPressHandler
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         binding.viewPager.adapter = MyPagerAdapter(this)
-        TabLayoutMediator(binding.tabLayout, binding.viewPager) { tab, position ->
+        binding.viewPager.applyTvPerformanceDefaults(pageCacheLimit = 1)
+        TabLayoutMediator(binding.tabLayout, binding.viewPager, true, false) { tab, position ->
             tab.text =
                 when (position) {
                     0 -> getString(R.string.my_tab_history)

@@ -11,6 +11,10 @@ import android.os.Bundle
 import android.os.Looper
 import android.os.SystemClock
 import android.util.TypedValue
+import android.transition.ChangeBounds
+import android.transition.ChangeImageTransform
+import android.transition.ChangeTransform
+import android.transition.TransitionSet
 import android.view.FocusFinder
 import android.view.KeyEvent
 import android.view.Surface
@@ -23,6 +27,7 @@ import android.widget.FrameLayout
 import android.widget.SeekBar
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnPreDraw
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -668,6 +673,19 @@ class PlayerActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val sharedElementName = intent.getStringExtra(EXTRA_SHARED_ELEMENT_NAME)?.trim().takeIf { !it.isNullOrBlank() }
+        if (sharedElementName != null) {
+            fun createSharedTransition(): TransitionSet =
+                TransitionSet()
+                    .addTransition(ChangeBounds())
+                    .addTransition(ChangeTransform())
+                    .addTransition(ChangeImageTransform())
+                    .setOrdering(TransitionSet.ORDERING_TOGETHER)
+                    .setDuration(260L)
+            window.sharedElementEnterTransition = createSharedTransition()
+            window.sharedElementReturnTransition = createSharedTransition()
+            postponeEnterTransition()
+        }
         PlayerOsdSizing.applyTheme(this)
         ActivityStackLimiter.register(group = ACTIVITY_STACK_GROUP, activity = this, maxDepth = ACTIVITY_STACK_MAX_DEPTH)
         val prefs = BiliClient.prefs
@@ -678,6 +696,10 @@ class PlayerActivity : BaseActivity() {
             )
         binding = ActivityPlayerBinding.bind(root)
         setContentView(binding.root)
+        if (sharedElementName != null) {
+            binding.playerView.transitionName = sharedElementName
+            binding.playerView.doOnPreDraw { startPostponedEnterTransition() }
+        }
         Immersive.apply(this, prefs.fullscreenEnabled)
         PlayerUiMode.applyVideo(this, binding)
         binding.topBar.setBackgroundResource(R.drawable.bg_player_top_scrim_strong)
@@ -3312,6 +3334,7 @@ class PlayerActivity : BaseActivity() {
         const val EXTRA_START_POSITION_MS = "start_position_ms"
         const val EXTRA_PLAYLIST_TOKEN = "playlist_token"
         const val EXTRA_PLAYLIST_INDEX = "playlist_index"
+        const val EXTRA_SHARED_ELEMENT_NAME = "shared_element_name"
         internal const val EXTRA_ENGINE_SWITCH_RESUME_POSITION_MS = "engine_switch_resume_position_ms"
         internal const val EXTRA_ENGINE_SWITCH_RESUME_PLAY_WHEN_READY = "engine_switch_resume_play_when_ready"
         internal const val EXTRA_ENGINE_SWITCH_SESSION_JSON = "engine_switch_session_json"

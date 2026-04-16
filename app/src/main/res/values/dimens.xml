@@ -4,40 +4,40 @@
     <dimen name="splash_logo_height">186dp</dimen>
 
     <!-- Sidebar (baseline 1080p@1.5) -->
-    <dimen name="sidebar_width">77dp</dimen>
-    <dimen name="sidebar_user_size">40dp</dimen>
-    <dimen name="sidebar_user_margin_top">12dp</dimen>
-    <dimen name="sidebar_login_size">56dp</dimen>
-    <dimen name="sidebar_login_margin_top">12dp</dimen>
-    <dimen name="sidebar_login_text_size">16sp</dimen>
-    <dimen name="sidebar_nav_margin_top">16dp</dimen>
+    <dimen name="sidebar_width">92dp</dimen>
+    <dimen name="sidebar_user_size">50dp</dimen>
+    <dimen name="sidebar_user_margin_top">24dp</dimen>
+    <dimen name="sidebar_login_size">50dp</dimen>
+    <dimen name="sidebar_login_margin_top">24dp</dimen>
+    <dimen name="sidebar_login_text_size">14sp</dimen>
+    <dimen name="sidebar_nav_margin_top">20dp</dimen>
     <dimen name="sidebar_settings_size">44dp</dimen>
     <dimen name="sidebar_settings_padding">6dp</dimen>
-    <dimen name="sidebar_main_settings_size">34dp</dimen>
-    <dimen name="sidebar_main_settings_padding">4.5dp</dimen>
-    <dimen name="sidebar_settings_margin_bottom">12dp</dimen>
+    <dimen name="sidebar_main_settings_size">38dp</dimen>
+    <dimen name="sidebar_main_settings_padding">5dp</dimen>
+    <dimen name="sidebar_settings_margin_bottom">16dp</dimen>
 
     <!-- Sidebar nav item -->
-    <dimen name="sidebar_nav_card_margin_v">2dp</dimen>
-    <dimen name="sidebar_nav_card_margin_h">6dp</dimen>
-    <dimen name="sidebar_nav_container_padding_v">8dp</dimen>
+    <dimen name="sidebar_nav_card_margin_v">3dp</dimen>
+    <dimen name="sidebar_nav_card_margin_h">8dp</dimen>
+    <dimen name="sidebar_nav_container_padding_v">10dp</dimen>
     <dimen name="sidebar_nav_icon_size">32dp</dimen>
-    <dimen name="sidebar_nav_label_margin_top">4dp</dimen>
-    <dimen name="sidebar_nav_label_text_size">14sp</dimen>
-    <dimen name="sidebar_nav_item_height_default">48dp</dimen>
-    <dimen name="sidebar_nav_item_height_selected">84dp</dimen>
-    <dimen name="sidebar_nav_item_height_labeled">72dp</dimen>
+    <dimen name="sidebar_nav_label_margin_top">5dp</dimen>
+    <dimen name="sidebar_nav_label_text_size">15sp</dimen>
+    <dimen name="sidebar_nav_item_height_default">52dp</dimen>
+    <dimen name="sidebar_nav_item_height_selected">88dp</dimen>
+    <dimen name="sidebar_nav_item_height_labeled">76dp</dimen>
 
     <!-- Video card -->
-    <dimen name="video_card_margin">8dp</dimen>
-    <dimen name="video_card_text_margin">10dp</dimen>
-    <dimen name="video_card_duration_text_size">14sp</dimen>
+    <dimen name="video_card_margin">10dp</dimen>
+    <dimen name="video_card_text_margin">12dp</dimen>
+    <dimen name="video_card_duration_text_size">15sp</dimen>
     <dimen name="video_card_duration_padding_h">8dp</dimen>
     <dimen name="video_card_duration_padding_v">3dp</dimen>
     <dimen name="video_card_stat_icon_size">18dp</dimen>
-    <dimen name="video_card_stat_text_size">14sp</dimen>
-    <dimen name="video_card_title_text_size">18sp</dimen>
-    <dimen name="video_card_subtitle_text_size">14sp</dimen>
+    <dimen name="video_card_stat_text_size">15sp</dimen>
+    <dimen name="video_card_title_text_size">19sp</dimen>
+    <dimen name="video_card_subtitle_text_size">15sp</dimen>
 
     <!-- Player: bottom recommend panel -->
     <dimen name="player_recommend_card_width">260dp</dimen>

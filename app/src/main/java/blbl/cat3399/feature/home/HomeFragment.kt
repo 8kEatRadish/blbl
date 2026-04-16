@@ -15,6 +15,7 @@ import blbl.cat3399.core.prefs.AppPrefs
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.ui.TabSwitchFocusTarget
 import blbl.cat3399.core.ui.enableDpadTabFocus
+import blbl.cat3399.core.ui.applyTvPerformanceDefaults
 import blbl.cat3399.core.ui.postDelayedIfAlive
 import blbl.cat3399.core.ui.postIfAlive
 import blbl.cat3399.databinding.FragmentHomeBinding
@@ -108,7 +109,8 @@ class HomeFragment : Fragment(), VideoGridTabSwitchFocusHost, BackPressHandler {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         binding.viewPager.adapter = HomePagerAdapter(this)
-        TabLayoutMediator(binding.tabLayout, binding.viewPager) { tab, position ->
+        binding.viewPager.applyTvPerformanceDefaults(pageCacheLimit = 1)
+        TabLayoutMediator(binding.tabLayout, binding.viewPager, true, false) { tab, position ->
             tab.text = when (position) {
                 0 -> getString(R.string.tab_recommend)
                 1 -> getString(R.string.tab_popular)

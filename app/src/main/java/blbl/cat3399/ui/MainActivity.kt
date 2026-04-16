@@ -16,7 +16,6 @@ import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
-import androidx.recyclerview.widget.SimpleItemAnimator
 import blbl.cat3399.R
 import blbl.cat3399.core.api.BiliApi
 import blbl.cat3399.core.log.AppLog
@@ -29,6 +28,7 @@ import blbl.cat3399.core.ui.BaseActivity
 import blbl.cat3399.core.ui.FocusReturn
 import blbl.cat3399.core.ui.FocusTreeUtils
 import blbl.cat3399.core.ui.Immersive
+import blbl.cat3399.core.ui.applyTvPerformanceDefaults
 import blbl.cat3399.core.ui.cloneInUserScale
 import blbl.cat3399.core.ui.popup.AppPopup
 import blbl.cat3399.core.ui.popup.PopupHandle
@@ -69,6 +69,7 @@ class MainActivity : BaseActivity(), SidebarFocusHost {
     private var userInfoLoadJob: Job? = null
     private var lastBackAtMs: Long = 0L
     private var lastMainFocusAtMs: Long = 0L
+    private var homeEnterMotionPlayed: Boolean = false
 
     private data class FocusabilitySnapshot(
         val descendantFocusability: Int,
@@ -120,15 +121,15 @@ class MainActivity : BaseActivity(), SidebarFocusHost {
         )
         binding.recyclerSidebar.layoutManager = LinearLayoutManager(this)
         binding.recyclerSidebar.adapter = navAdapter
-        (binding.recyclerSidebar.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+        binding.recyclerSidebar.applyTvPerformanceDefaults(itemViewCacheSize = 8, initialPrefetchItemCount = 6)
         navAdapter.submit(
             listOf(
+                SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_SEARCH, getString(R.string.tab_search), R.drawable.ic_nav_search),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_HOME, getString(R.string.tab_recommend), R.drawable.ic_nav_home),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_CATEGORY, getString(R.string.tab_category), R.drawable.ic_nav_category),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_DYNAMIC, getString(R.string.tab_dynamic), R.drawable.ic_nav_dynamic),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_LIVE, getString(R.string.tab_live), R.drawable.ic_nav_live),
                 SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_MY, getString(R.string.tab_my), R.drawable.ic_nav_my),
-                SidebarNavAdapter.NavItem(SidebarNavAdapter.ID_SEARCH, getString(R.string.tab_search), R.drawable.ic_nav_search),
             ),
             selectedId = initialSelectedNavId,
         )
@@ -181,6 +182,9 @@ class MainActivity : BaseActivity(), SidebarFocusHost {
 
         refreshSidebarUser()
         showFirstLaunchDisclaimerIfNeeded()
+        if (savedInstanceState == null) {
+            playHomeEnterMotionOnce()
+        }
     }
 
     private fun resolveLaunchNavId(): Int {
@@ -192,6 +196,39 @@ class MainActivity : BaseActivity(), SidebarFocusHost {
             AppPrefs.STARTUP_PAGE_MY -> SidebarNavAdapter.ID_MY
             else -> SidebarNavAdapter.ID_HOME
         }
+    }
+
+    private fun playHomeEnterMotionOnce() {
+        if (homeEnterMotionPlayed) return
+        homeEnterMotionPlayed = true
+
+        val sidebar = binding.sidebar
+        val main = binding.mainContainer
+
+        sidebar.alpha = 0f
+        sidebar.translationX = -dp(16f).toFloat()
+        main.alpha = 0f
+        main.translationY = dp(18f).toFloat()
+        main.scaleX = 0.985f
+        main.scaleY = 0.985f
+
+        sidebar.animate()
+            .alpha(1f)
+            .translationX(0f)
+            .setDuration(240L)
+            .setStartDelay(40L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.2f))
+            .start()
+
+        main.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(300L)
+            .setStartDelay(110L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.25f))
+            .start()
     }
 
     private fun isAtLaunchRoot(fragment: Fragment?): Boolean {
@@ -846,7 +883,7 @@ class MainActivity : BaseActivity(), SidebarFocusHost {
         if (!needForceInitialSidebarFocus) return
         val focused = currentFocus
         if (focused == null || !FocusTreeUtils.isDescendantOf(focused, binding.recyclerSidebar)) {
-            focusSidebarFirstNav()
+            focusSidebarSelectedNav()
         }
         needForceInitialSidebarFocus = false
     }
@@ -1070,12 +1107,29 @@ class MainActivity : BaseActivity(), SidebarFocusHost {
     private fun moveSidebarFocus(up: Boolean): Boolean {
         val focused = currentFocus ?: return false
 
-        val movingToNav = !up && (focused == binding.ivSidebarUser || focused == binding.btnSidebarLogin)
-        if (movingToNav) return focusSidebarFirstNav()
-
         if (focused == binding.btnSidebarSettings) {
+            if (up) return focusSidebarNavAt(navAdapter.itemCount - 1)
+            if (binding.ivSidebarUser.visibility == View.VISIBLE) {
+                binding.ivSidebarUser.requestFocus()
+                return true
+            }
+            if (binding.btnSidebarLogin.visibility == View.VISIBLE) {
+                binding.btnSidebarLogin.requestFocus()
+                return true
+            }
+            return true
+        }
+
+        if (focused == binding.ivSidebarUser) {
             if (!up) return true
-            return focusSidebarNavAt(navAdapter.itemCount - 1)
+            binding.btnSidebarSettings.requestFocus()
+            return true
+        }
+
+        if (focused == binding.btnSidebarLogin) {
+            if (!up) return true
+            binding.btnSidebarSettings.requestFocus()
+            return true
         }
 
         val inNav = FocusTreeUtils.isDescendantOf(focused, binding.recyclerSidebar)
@@ -1092,11 +1146,6 @@ class MainActivity : BaseActivity(), SidebarFocusHost {
             if (pos > 0) {
                 focusSidebarNavAt(pos - 1)
             } else {
-                if (binding.ivSidebarUser.visibility == View.VISIBLE) {
-                    binding.ivSidebarUser.requestFocus()
-                } else if (binding.btnSidebarLogin.visibility == View.VISIBLE) {
-                    binding.btnSidebarLogin.requestFocus()
-                }
                 true
             }
         } else {

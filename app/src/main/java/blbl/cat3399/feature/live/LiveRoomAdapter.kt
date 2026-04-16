@@ -3,6 +3,7 @@ package blbl.cat3399.feature.live
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import blbl.cat3399.R
 import blbl.cat3399.core.image.ImageLoader
@@ -27,9 +28,27 @@ class LiveRoomAdapter(
     }
 
     fun submit(list: List<LiveRoomCard>) {
+        val oldItems = items.toList()
+        val diff =
+            DiffUtil.calculateDiff(
+                object : DiffUtil.Callback() {
+                    override fun getOldListSize(): Int = oldItems.size
+
+                    override fun getNewListSize(): Int = list.size
+
+                    override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+                        return oldItems[oldItemPosition].roomId == list[newItemPosition].roomId
+                    }
+
+                    override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+                        return oldItems[oldItemPosition] == list[newItemPosition]
+                    }
+                },
+                true,
+            )
         items.clear()
         items.addAll(list)
-        notifyDataSetChanged()
+        diff.dispatchUpdatesTo(this)
     }
 
     fun append(list: List<LiveRoomCard>) {

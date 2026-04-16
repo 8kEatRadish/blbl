@@ -20,19 +20,25 @@ import java.util.WeakHashMap
 object ImageLoader {
     private const val TAG = "ImageLoader"
     private val placeholder = ColorDrawable(0xFF2A2A2A.toInt())
-    private val inFlight = WeakHashMap<ImageView, Job>()
+    private val viewAttachedUrl = WeakHashMap<ImageView, String>()
+    private val inFlightByUrl = HashMap<String, InFlightRequest>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val cache = object : LruCache<String, Bitmap>(maxCacheBytes()) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
+    private data class InFlightRequest(
+        val targets: MutableSet<ImageView>,
+        val job: Job,
+    )
+
     fun loadInto(view: ImageView, url: String?) {
         val normalized = normalizeImageUrl(url)
 
         if (normalized == null) {
             view.setTag(R.id.tag_image_loader_url, null)
-            inFlight.remove(view)?.cancel()
+            detachView(view)
             if (view.drawable !== placeholder) view.setImageDrawable(placeholder)
             return
         }
@@ -43,15 +49,11 @@ object ImageLoader {
             // flicker on rebind (e.g. switching tabs triggers notifyItemRangeChanged).
             val drawable = view.drawable
             if (drawable != null && drawable !== placeholder) {
-                inFlight.remove(view)?.cancel()
                 return
             }
-            // If the same URL is already loading, keep the current placeholder.
-            val inFlightJob = inFlight[view]
-            if (inFlightJob != null && inFlightJob.isActive) return
         } else {
             view.setTag(R.id.tag_image_loader_url, normalized)
-            inFlight.remove(view)?.cancel()
+            detachView(view)
         }
 
         val cached = cache.get(normalized)
@@ -61,21 +63,108 @@ object ImageLoader {
         }
 
         if (view.drawable !== placeholder) view.setImageDrawable(placeholder)
+
+        inFlightByUrl[normalized]?.let { request ->
+            request.targets.add(view)
+            viewAttachedUrl[view] = normalized
+            return
+        }
+
+        val targets = linkedSetOf(view)
         val job = scope.launch {
-            try {
-                val bytes = withContext(Dispatchers.IO) { BiliClient.getBytes(normalized) }
-                val bmp = withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
-                if (bmp != null) {
-                    cache.put(normalized, bmp)
-                    if ((view.getTag(R.id.tag_image_loader_url) as? String) == normalized) {
-                        view.setImageBitmap(bmp)
+            val bitmap =
+                runCatching {
+                    val bytes = withContext(Dispatchers.IO) { BiliClient.getBytes(normalized) }
+                    withContext(Dispatchers.Default) {
+                        decodeBestEffort(
+                            bytes = bytes,
+                            reqWidth = view.width,
+                            reqHeight = view.height,
+                        )
+                    }
+                }.onFailure { t ->
+                    AppLog.w(TAG, "load failed url=$normalized", t)
+                }.getOrNull()
+
+            val request = inFlightByUrl.remove(normalized)
+            val boundTargets = request?.targets?.toList().orEmpty()
+            if (bitmap == null) {
+                boundTargets.forEach { target ->
+                    if ((target.getTag(R.id.tag_image_loader_url) as? String) == normalized && target.drawable == null) {
+                        target.setImageDrawable(placeholder)
+                    }
+                    if (viewAttachedUrl[target] == normalized) {
+                        viewAttachedUrl.remove(target)
                     }
                 }
-            } catch (t: Throwable) {
-                AppLog.w(TAG, "load failed url=$normalized", t)
+                return@launch
+            }
+
+            cache.put(normalized, bitmap)
+            boundTargets.forEach { target ->
+                if ((target.getTag(R.id.tag_image_loader_url) as? String) == normalized) {
+                    target.setImageBitmap(bitmap)
+                }
+                if (viewAttachedUrl[target] == normalized) {
+                    viewAttachedUrl.remove(target)
+                }
             }
         }
-        inFlight[view] = job
+        inFlightByUrl[normalized] = InFlightRequest(targets = targets, job = job)
+        viewAttachedUrl[view] = normalized
+    }
+
+    private fun detachView(view: ImageView) {
+        val oldUrl = viewAttachedUrl.remove(view) ?: return
+        val request = inFlightByUrl[oldUrl] ?: return
+        request.targets.remove(view)
+        if (request.targets.isEmpty()) {
+            request.job.cancel()
+            inFlightByUrl.remove(oldUrl)
+        }
+    }
+
+    private fun decodeBestEffort(
+        bytes: ByteArray,
+        reqWidth: Int,
+        reqHeight: Int,
+    ): Bitmap? {
+        val safeReqWidth = reqWidth.coerceAtLeast(0)
+        val safeReqHeight = reqHeight.coerceAtLeast(0)
+        if (safeReqWidth <= 0 || safeReqHeight <= 0) {
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }
+
+        val bounds =
+            BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val sampleSize = calculateInSampleSize(bounds, safeReqWidth, safeReqHeight)
+        val options =
+            BitmapFactory.Options().apply {
+                inSampleSize = sampleSize.coerceAtLeast(1)
+            }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
+
+    private fun calculateInSampleSize(
+        bounds: BitmapFactory.Options,
+        reqWidth: Int,
+        reqHeight: Int,
+    ): Int {
+        val rawHeight = bounds.outHeight
+        val rawWidth = bounds.outWidth
+        if (rawHeight <= 0 || rawWidth <= 0) return 1
+        var inSampleSize = 1
+        if (rawHeight > reqHeight || rawWidth > reqWidth) {
+            val halfHeight = rawHeight / 2
+            val halfWidth = rawWidth / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
     }
 
     private fun normalizeImageUrl(url: String?): String? {

@@ -80,6 +80,7 @@ import blbl.cat3399.feature.player.engine.IjkPlayerEngine
 import blbl.cat3399.feature.player.engine.IjkPlayerPlugin
 import blbl.cat3399.feature.player.engine.PlayerEngineKind
 import blbl.cat3399.feature.player.engine.PlaybackSource
+import blbl.cat3399.feature.cast.CastPlaybackBridge
 import blbl.cat3399.feature.settings.SettingsActivity
 import blbl.cat3399.feature.video.VideoDetailActivity
 import blbl.cat3399.databinding.ActivityPlayerBinding
@@ -194,6 +195,46 @@ class PlayerActivity : BaseActivity() {
     internal var seekOsdToken: Long = 0L
     internal var transientSeekOsdVisible: Boolean = false
     internal var bottomBarFullConstraints: ConstraintSet? = null
+    private val castPlaybackController =
+        object : CastPlaybackBridge.Controller {
+            override fun play() {
+                runOnUiThread {
+                    val engine = player ?: return@runOnUiThread
+                    engine.playWhenReady = true
+                    AppLog.i("Player", "cast control play")
+                }
+            }
+
+            override fun pause() {
+                runOnUiThread {
+                    player?.pause()
+                    AppLog.i("Player", "cast control pause")
+                }
+            }
+
+            override fun stop() {
+                runOnUiThread {
+                    val engine = player ?: return@runOnUiThread
+                    engine.playWhenReady = false
+                    engine.stop()
+                    AppLog.i("Player", "cast control stop")
+                }
+            }
+
+            override fun seekTo(positionMs: Long) {
+                val safePos = positionMs.coerceAtLeast(0L)
+                runOnUiThread {
+                    player?.seekTo(safePos)
+                    AppLog.i("Player", "cast control seek posMs=$safePos")
+                }
+            }
+
+            override fun currentPositionMs(): Long = player?.currentPosition ?: 0L
+
+            override fun durationMs(): Long = player?.duration ?: 0L
+
+            override fun isPlaying(): Boolean = player?.isPlaying == true
+        }
 
     internal enum class OsdMode {
         Hidden,
@@ -659,6 +700,7 @@ class PlayerActivity : BaseActivity() {
         binding.tvPubdate.visibility = View.GONE
 
         val bvid = intent.getStringExtra(EXTRA_BVID).orEmpty()
+        val directUrl = intent.getStringExtra(EXTRA_DIRECT_URL).orEmpty().trim()
         val cidExtra = intent.getLongExtra(EXTRA_CID, -1L).takeIf { it > 0 }
         val epIdExtra = intent.getLongExtra(EXTRA_EP_ID, -1L).takeIf { it > 0 }
         val aidExtra = intent.getLongExtra(EXTRA_AID, -1L).takeIf { it > 0 }
@@ -715,7 +757,7 @@ class PlayerActivity : BaseActivity() {
             pendingIntentResumeCid = cidExtra
             pendingIntentResumeEpId = epIdExtra
         }
-        if (currentBvid.isBlank() && currentAid == null) {
+        if (currentBvid.isBlank() && currentAid == null && directUrl.isBlank()) {
             AppToast.show(this, "缺少 bvid/aid")
             finish()
             return
@@ -1031,15 +1073,22 @@ class PlayerActivity : BaseActivity() {
                 finish()
             }
         playbackUncaughtHandler = uncaughtHandler
-        startPlayback(
-            bvid = bvid,
-            cidExtra = cidExtra,
-            epIdExtra = epIdExtra,
-            aidExtra = aidExtra,
-            seasonIdExtra = seasonIdExtra,
-            initialTitle = pageListItems.getOrNull(pageListIndex)?.title,
-            startedFromList = PlayerVideoListKind.PAGE,
-        )
+        if (directUrl.isNotBlank()) {
+            startDirectPlayback(
+                mediaUrl = directUrl,
+                initialTitle = pageListItems.getOrNull(pageListIndex)?.title,
+            )
+        } else {
+            startPlayback(
+                bvid = bvid,
+                cidExtra = cidExtra,
+                epIdExtra = epIdExtra,
+                aidExtra = aidExtra,
+                seasonIdExtra = seasonIdExtra,
+                initialTitle = pageListItems.getOrNull(pageListIndex)?.title,
+                startedFromList = PlayerVideoListKind.PAGE,
+            )
+        }
     }
 
     internal data class PlayFetchResult(
@@ -1553,6 +1602,7 @@ class PlayerActivity : BaseActivity() {
 
     override fun onStop() {
         touchController?.onStop()
+        CastPlaybackBridge.unregister(castPlaybackController)
         exitTraceStopAtMs = SystemClock.elapsedRealtime()
         if (exitCleanupRequested || isFinishing) {
             exitTraceStart("onStop")
@@ -1586,6 +1636,7 @@ class PlayerActivity : BaseActivity() {
 
     override fun onStart() {
         super.onStart()
+        CastPlaybackBridge.register(castPlaybackController)
         val engine = player ?: return
         val exo = (engine as? ExoPlayerEngine)?.exoPlayer ?: return
         if (!resumeAfterDecoderRelease) return
@@ -1646,6 +1697,7 @@ class PlayerActivity : BaseActivity() {
     }
 
     override fun onDestroy() {
+        CastPlaybackBridge.unregister(castPlaybackController)
         val t0 = SystemClock.elapsedRealtime()
         exitTraceDestroyAtMs = t0
         if (exitCleanupRequested || isFinishing || exitTraceStartAtMs > 0L) {
@@ -3252,6 +3304,7 @@ class PlayerActivity : BaseActivity() {
         private const val HIGH_SPEC_FALLBACK_MAX_ATTEMPTS = 3
         private const val EXIT_TRACE_PREFIX = "EXIT_TRACE"
         const val EXTRA_BVID = "bvid"
+        const val EXTRA_DIRECT_URL = "direct_url"
         const val EXTRA_CID = "cid"
         const val EXTRA_EP_ID = "ep_id"
         const val EXTRA_AID = "aid"

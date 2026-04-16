@@ -289,6 +289,18 @@ class SettingsRenderer(
                         if (prefs.liveHighBitrateEnabled) "开" else "关",
                         "如果直播遇到问题,请关闭此功能",
                     ),
+                    SettingEntry(
+                        SettingId.DlnaServiceEnabled,
+                        "DLNA投屏接收",
+                        if (prefs.dlnaServiceEnabled) "开" else "关",
+                        "关闭后将不再被局域网内的DLNA设备发现",
+                    ),
+                    SettingEntry(
+                        SettingId.AirPlayServiceEnabled,
+                        "AirPlay投屏接收",
+                        if (prefs.airPlayServiceEnabled) "开" else "关",
+                        "关闭后将不再被局域网内的AirPlay设备发现",
+                    ),
                     SettingEntry(SettingId.PlayerDebugEnabled, "显示视频调试信息", if (prefs.playerDebugEnabled) "开" else "关", null),
                 )
 

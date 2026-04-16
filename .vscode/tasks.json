@@ -1,0 +1,104 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Android: Doctor",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "& { . .\\.vscode\\scripts\\android-env.ps1; Write-Host '--- java ---'; java -version; Write-Host '--- adb ---'; adb version; Write-Host '--- devices ---'; adb devices }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Assemble Debug",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "& { . .\\.vscode\\scripts\\android-env.ps1; .\\gradlew.bat assembleDebug }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": [
+        "$gradle"
+      ]
+    },
+    {
+      "label": "Android: Install Debug",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "& { . .\\.vscode\\scripts\\android-env.ps1; .\\gradlew.bat installDebug }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "Android: Assemble Debug"
+      ],
+      "problemMatcher": [
+        "$gradle"
+      ]
+    },
+    {
+      "label": "Android: Launch App",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "& { . .\\.vscode\\scripts\\android-env.ps1; adb shell monkey -p blbl.cat3399 -c android.intent.category.LAUNCHER 1 }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Run (Build + Install + Launch)",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Android: Install Debug",
+        "Android: Launch App"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Logcat (BLBL)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "& { . .\\.vscode\\scripts\\android-env.ps1; adb logcat -v time | Select-String -Pattern 'BLBL' }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}
+

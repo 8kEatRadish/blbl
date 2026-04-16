@@ -1,0 +1,12 @@
+{
+  "files.eol": "\n",
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.env.windows": {
+    "JAVA_HOME": "D:\\Android\\Android Studio\\jbr",
+    "ANDROID_SDK_ROOT": "C:\\Users\\shawn\\AppData\\Local\\Android\\Sdk",
+    "ANDROID_HOME": "C:\\Users\\shawn\\AppData\\Local\\Android\\Sdk",
+    "PATH": "D:\\Android\\Android Studio\\jbr\\bin;C:\\Users\\shawn\\AppData\\Local\\Android\\Sdk\\platform-tools;C:\\Users\\shawn\\AppData\\Local\\Android\\Sdk\\emulator;${env:PATH}"
+  },
+  "java.import.gradle.wrapper.enabled": true,
+  "java.configuration.updateBuildConfiguration": "automatic"
+}

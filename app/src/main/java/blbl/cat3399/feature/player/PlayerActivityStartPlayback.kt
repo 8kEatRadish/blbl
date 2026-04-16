@@ -466,6 +466,78 @@ internal fun PlayerActivity.startPlayback(
         }
 }
 
+internal fun PlayerActivity.startDirectPlayback(
+    mediaUrl: String,
+    initialTitle: String? = null,
+) {
+    val engine = player ?: return
+    val safeUrl = mediaUrl.trim()
+    if (safeUrl.isBlank()) {
+        AppToast.show(this, "投屏地址为空")
+        finish()
+        return
+    }
+
+    AppLog.i("Player", "start direct cast url=$safeUrl")
+    currentBvid = ""
+    currentAid = null
+    currentCid = -1L
+    currentEpId = null
+    currentSeasonId = null
+    currentMainTitle = initialTitle?.trim().takeIf { !it.isNullOrBlank() } ?: "Cast"
+
+    cancelPendingAutoResume(reason = "direct_media")
+    autoResumeToken++
+    autoResumeCancelledByUser = false
+    cancelPendingAutoSkip(reason = "direct_media", markIgnored = false)
+    autoSkipFetchJob?.cancel()
+    autoSkipFetchJob = null
+    autoSkipSegments = emptyList()
+    autoSkipHandledSegmentIds.clear()
+    autoSkipPending = null
+    autoSkipToken++
+    stopReportProgressLoop(flush = false, reason = "direct_media")
+    reportToken++
+    lastReportAtMs = 0L
+    lastReportedProgressSec = -1L
+    loadJob?.cancel()
+    loadJob = null
+
+    resetPlaybackStateForNewMedia(
+        engine = engine,
+        preservePartsList = false,
+    )
+    updateTopTitleUi(placeholder = currentMainTitle)
+    pageListSource = null
+    pageListItems = emptyList()
+    pageListUiCards = emptyList()
+    pageListIndex = -1
+    partsListSource = null
+    partsListItems = emptyList()
+    partsListUiCards = emptyList()
+    partsListIndex = -1
+    updatePlaylistControls()
+
+    val pendingSeekMs = pendingStartPositionMs
+    val pendingPlayWhenReady = pendingStartPlayWhenReady
+    pendingStartPositionMs = null
+    pendingStartPlayWhenReady = null
+
+    val playable = Playable.Progressive(url = safeUrl, urlCandidates = listOf(safeUrl))
+    engine.setSource(
+        PlaybackSource.Vod(
+            playable = playable,
+            subtitle = null,
+            durationMs = null,
+        ),
+    )
+    engine.prepare()
+    engine.playWhenReady = pendingPlayWhenReady ?: true
+    if (pendingSeekMs != null && pendingSeekMs > 0L) {
+        engine.seekTo(pendingSeekMs)
+    }
+}
+
 internal fun PlayerActivity.updatePageListIndexForCurrentMedia(
     bvid: String,
     aid: Long?,

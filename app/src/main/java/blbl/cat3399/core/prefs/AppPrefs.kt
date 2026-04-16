@@ -312,6 +312,14 @@ class AppPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_LIVE_HIGH_BITRATE_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_LIVE_HIGH_BITRATE_ENABLED, value).apply()
 
+    var dlnaServiceEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DLNA_SERVICE_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_DLNA_SERVICE_ENABLED, value).apply()
+
+    var airPlayServiceEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AIRPLAY_SERVICE_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_AIRPLAY_SERVICE_ENABLED, value).apply()
+
     var subtitlePreferredLang: String
         get() = prefs.getString(KEY_SUBTITLE_LANG, "auto") ?: "auto"
         set(value) = prefs.edit().putString(KEY_SUBTITLE_LANG, value).apply()
@@ -786,6 +794,8 @@ class AppPrefs(context: Context) {
         private const val KEY_PLAYER_AUDIO_ID = "player_audio_id"
         private const val KEY_PLAYER_CDN_PREFERENCE = "player_cdn_preference"
         private const val KEY_LIVE_HIGH_BITRATE_ENABLED = "live_high_bitrate_enabled"
+        private const val KEY_DLNA_SERVICE_ENABLED = "dlna_service_enabled"
+        private const val KEY_AIRPLAY_SERVICE_ENABLED = "airplay_service_enabled"
         private const val KEY_SUBTITLE_LANG = "subtitle_lang"
         private const val KEY_SUBTITLE_ENABLED_DEFAULT = "subtitle_enabled_default"
         private const val KEY_SUBTITLE_TEXT_SIZE_SP = "subtitle_text_size_sp"

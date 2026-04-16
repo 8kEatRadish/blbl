@@ -33,6 +33,8 @@ enum class SettingId(
     PlayerPreferredAudioId("player_preferred_audio_id"),
     PlayerCdnPreference("player_cdn_preference"),
     LiveHighBitrateEnabled("live_high_bitrate_enabled"),
+    DlnaServiceEnabled("dlna_service_enabled"),
+    AirPlayServiceEnabled("airplay_service_enabled"),
     PlayerSpeed("player_speed"),
     PlayerHoldSeekSpeed("player_hold_seek_speed"),
     PlayerHoldSeekMode("player_hold_seek_mode"),

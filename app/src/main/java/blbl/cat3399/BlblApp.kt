@@ -8,6 +8,8 @@ import blbl.cat3399.core.log.CrashTracker
 import blbl.cat3399.core.emote.ReplyEmotePanelRepository
 import blbl.cat3399.core.net.BiliClient
 import blbl.cat3399.core.net.WebCookieMaintainer
+import blbl.cat3399.feature.cast.AirPlayReceiverService
+import blbl.cat3399.feature.cast.DlnaCastReceiverService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,6 +38,8 @@ class BlblApp : Application() {
             runCatching { ReplyEmotePanelRepository.warmup(this@BlblApp) }
                 .onFailure { AppLog.w("BlblApp", "reply emote warmup failed", it) }
         }
+        DlnaCastReceiverService.syncService(this, enabled = BiliClient.prefs.dlnaServiceEnabled)
+        AirPlayReceiverService.syncService(this, enabled = BiliClient.prefs.airPlayServiceEnabled)
     }
 
     companion object {

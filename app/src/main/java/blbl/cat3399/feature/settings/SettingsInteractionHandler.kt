@@ -41,6 +41,8 @@ import blbl.cat3399.feature.player.engine.IjkPlayerPluginUi
 import blbl.cat3399.feature.player.AudioBalanceLevel
 import blbl.cat3399.feature.player.PlayerCustomShortcutCatalog
 import blbl.cat3399.feature.risk.GaiaVgateActivity
+import blbl.cat3399.feature.cast.DlnaCastReceiverService
+import blbl.cat3399.feature.cast.AirPlayReceiverService
 import blbl.cat3399.ui.MainActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -417,6 +419,8 @@ class SettingsInteractionHandler(
                 JSONObject()
                     .put("ipv4_only_enabled", prefs.ipv4OnlyEnabled)
                     .put("user_agent", prefs.userAgent)
+                    .put("dlna_service_enabled", prefs.dlnaServiceEnabled)
+                    .put("airplay_service_enabled", prefs.airPlayServiceEnabled)
                     .put("player_cdn_preference", prefs.playerCdnPreference),
             )
             .put(
@@ -1113,6 +1117,20 @@ class SettingsInteractionHandler(
             SettingId.LiveHighBitrateEnabled -> {
                 prefs.liveHighBitrateEnabled = !prefs.liveHighBitrateEnabled
                 AppToast.show(activity, "提高直播码率：${if (prefs.liveHighBitrateEnabled) "开" else "关"}")
+                renderer.refreshSection(entry.id)
+            }
+
+            SettingId.DlnaServiceEnabled -> {
+                prefs.dlnaServiceEnabled = !prefs.dlnaServiceEnabled
+                DlnaCastReceiverService.syncService(activity, enabled = prefs.dlnaServiceEnabled)
+                AppToast.show(activity, "DLNA投屏接收：${if (prefs.dlnaServiceEnabled) "开" else "关"}")
+                renderer.refreshSection(entry.id)
+            }
+
+            SettingId.AirPlayServiceEnabled -> {
+                prefs.airPlayServiceEnabled = !prefs.airPlayServiceEnabled
+                AirPlayReceiverService.syncService(activity, enabled = prefs.airPlayServiceEnabled)
+                AppToast.show(activity, "AirPlay投屏接收：${if (prefs.airPlayServiceEnabled) "开" else "关"}")
                 renderer.refreshSection(entry.id)
             }
 

@@ -15,5 +15,8 @@ local.properties
 .DS_Store
 
 *.apk
-keystore/
+/keystore
+*.jks
+*.keystore
+key.properties
 docs/

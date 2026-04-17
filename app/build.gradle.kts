@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -8,11 +10,21 @@ android {
     namespace = "blbl.cat3399"
     compileSdk = 36
 
+    val signingProps =
+        Properties().apply {
+            val signingFile = rootProject.file("key.properties")
+            if (signingFile.exists()) {
+                signingFile.inputStream().use(::load)
+            }
+        }
+
     fun propOrEnv(name: String): String? {
-        val fromProp = project.findProperty(name) as String?
-        if (!fromProp.isNullOrBlank()) return fromProp
         val fromEnv = System.getenv(name)
         if (!fromEnv.isNullOrBlank()) return fromEnv
+        val fromSigning = signingProps.getProperty(name)
+        if (!fromSigning.isNullOrBlank()) return fromSigning
+        val fromProp = project.findProperty(name) as String?
+        if (!fromProp.isNullOrBlank()) return fromProp
         return null
     }
 
@@ -30,7 +42,25 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = rootProject.file("keystore/release.keystore")
+            val configuredStorePath = propOrEnv("RELEASE_STORE_FILE")
+            val releaseStoreFile =
+                when {
+                    !configuredStorePath.isNullOrBlank() -> rootProject.file(configuredStorePath)
+                    else ->
+                        listOf(
+                            "keystore",
+                            "keystore.jks",
+                            "keystore.keystore",
+                            "keystore/release.jks",
+                            "keystore/release.keystore",
+                        ).asSequence()
+                            .map { rootProject.file(it) }
+                            .firstOrNull { it.exists() }
+                }
+
+            if (releaseStoreFile != null) {
+                storeFile = releaseStoreFile
+            }
             storePassword = propOrEnv("RELEASE_STORE_PASSWORD")
             keyAlias = propOrEnv("RELEASE_KEY_ALIAS")
             keyPassword = propOrEnv("RELEASE_KEY_PASSWORD")

@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicReference
 internal object CastPlaybackBridge {
     private const val TAG = "CastPlaybackBridge"
     private const val SNAPSHOT_TIMEOUT_MS = 250L
+    private const val CONTROL_TIMEOUT_MS = 400L
     private val mainHandler = Handler(Looper.getMainLooper())
 
     internal interface Controller {
@@ -102,11 +103,30 @@ internal object CastPlaybackBridge {
 
     private inline fun withController(
         actionName: String,
-        action: (Controller) -> Unit,
+        crossinline action: (Controller) -> Unit,
     ): Boolean {
         val c = controller ?: return false
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return runCatching {
+                action(c)
+                true
+            }.onFailure { AppLog.w(TAG, "action failed name=$actionName", it) }.getOrDefault(false)
+        }
         return runCatching {
-            action(c)
+            val error = AtomicReference<Throwable?>()
+            val latch = CountDownLatch(1)
+            mainHandler.post {
+                runCatching { action(c) }
+                    .onFailure { error.set(it) }
+                latch.countDown()
+            }
+            val finished = latch.await(CONTROL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            if (!finished) {
+                AppLog.w(TAG, "action timeout on main thread name=$actionName")
+                return@runCatching false
+            }
+            val thrown = error.get()
+            if (thrown != null) throw thrown
             true
         }.onFailure { AppLog.w(TAG, "action failed name=$actionName", it) }.getOrDefault(false)
     }

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.IBinder
 import blbl.cat3399.BuildConfig
 import blbl.cat3399.core.log.AppLog
@@ -28,6 +29,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 import kotlin.time.Duration.Companion.seconds
 
@@ -47,13 +49,23 @@ class AirPlayReceiverService : Service() {
     private var nsdManager: NsdManager? = null
     private var airplayListener: NsdManager.RegistrationListener? = null
     private var raopListener: NsdManager.RegistrationListener? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
     private var sessionState: String = "stopped"
     private var reverseSessionId: String? = null
     private var lastPlayUrl: String = ""
     private var lastPlayAtMs: Long = 0L
+    private val activeClientCount = AtomicInteger(0)
+    private val connectionSeq = AtomicInteger(0)
 
     private val deviceUuid: String by lazy { loadOrCreateDeviceUuid() }
     private val deviceIdHex: String by lazy { deviceUuid.replace("-", "").take(12).uppercase(Locale.US).padEnd(12, '0') }
+    private val publicKeyHex: String by lazy {
+        // AirPlay TXT "pk" is expected to be a 64-hex string (32 bytes public key format).
+        // We expose a stable pseudo key to satisfy client-side format checks.
+        MessageDigest.getInstance("SHA-256")
+            .digest(deviceUuid.toByteArray(StandardCharsets.UTF_8))
+            .joinToString(separator = "") { b -> "%02x".format(Locale.US, b) }
+    }
     private val deviceIdColon: String by lazy {
         buildString {
             for (i in deviceIdHex.indices step 2) {
@@ -66,6 +78,7 @@ class AirPlayReceiverService : Service() {
     override fun onCreate() {
         super.onCreate()
         if (!running.compareAndSet(false, true)) return
+        acquireMulticastLock()
         startServer()
         AppLog.i(TAG, "airplay service created uuid=$deviceUuid")
     }
@@ -74,7 +87,10 @@ class AirPlayReceiverService : Service() {
 
     override fun onDestroy() {
         running.set(false)
+        CastSessionCoordinator.clearProtocol(PROTOCOL_AIRPLAY)
         unregisterNsd()
+        runCatching { multicastLock?.release() }
+        multicastLock = null
         runCatching { serverSocket?.close() }
         serverSocket = null
         serverJob?.cancel()
@@ -99,40 +115,59 @@ class AirPlayReceiverService : Service() {
                 registerNsd()
                 while (running.get()) {
                     val client = runCatching { server.accept() }.getOrNull() ?: break
-                    AppLog.d(TAG, "airplay accepted from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}")
-                    scope.launch {
-                        runCatching { handleClient(client) }
-                            .onFailure { AppLog.w(TAG, "handle client failed", it) }
+                    if (activeClientCount.incrementAndGet() > MAX_ACTIVE_CLIENTS) {
+                        activeClientCount.decrementAndGet()
+                        AppLog.w(TAG, "airplay reject busy from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}")
+                        runCatching { writeServiceUnavailable(client) }
                         runCatching { client.close() }
+                        continue
+                    }
+                    val connectionId = connectionSeq.incrementAndGet()
+                    AppLog.d(TAG, "airplay accepted conn=$connectionId from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}")
+                    scope.launch {
+                        runCatching { handleClient(client = client, connectionId = connectionId) }
+                            .onFailure { AppLog.w(TAG, "handle client failed conn=$connectionId", it) }
+                        runCatching { client.close() }
+                        activeClientCount.decrementAndGet()
                     }
                 }
             }
     }
 
-    private fun handleClient(client: Socket) {
+    private fun handleClient(
+        client: Socket,
+        connectionId: Int,
+    ) {
+        val connStartMs = System.currentTimeMillis()
+        var closeReason = "normal"
         client.soTimeout = 5_000
+        client.keepAlive = true
+        client.tcpNoDelay = true
         val input = BufferedInputStream(client.getInputStream())
         val output = BufferedOutputStream(client.getOutputStream())
 
         val headBytes = readUntilHeaderEnd(input, HEADER_MAX_BYTES)
-        if (headBytes.isEmpty()) return
+        if (headBytes.isEmpty()) {
+            closeReason = "empty-header"
+            return
+        }
         val headText = String(headBytes, StandardCharsets.ISO_8859_1)
         val headParts = headText.split("\r\n\r\n", limit = 2)
         val lines = headParts.firstOrNull()?.split("\r\n").orEmpty()
-        if (lines.isEmpty()) return
+        if (lines.isEmpty()) {
+            closeReason = "no-header-lines"
+            return
+        }
         val requestLine = lines.first().trim()
         val reqParts = requestLine.split(' ')
         if (reqParts.size < 2) {
+            closeReason = "bad-request-line"
             writeResponse(output, status = "400 Bad Request", body = "bad request", contentType = "text/plain")
             return
         }
         val method = reqParts[0].uppercase(Locale.US)
         val requestTarget = reqParts[1]
         val route = normalizeRequestTarget(requestTarget)
-        AppLog.d(
-            TAG,
-            "airplay request method=$method path=${route.path} query=${route.query.ifBlank { "-" }} from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}",
-        )
         val headers = LinkedHashMap<String, String>()
         for (i in 1 until lines.size) {
             val line = lines[i]
@@ -143,106 +178,167 @@ class AirPlayReceiverService : Service() {
             val value = line.substring(idx + 1).trim()
             headers[name] = value
         }
+        val requestPhase = classifyAirPlayPhase(method = method, path = route.path)
+        val reqStartMs = System.currentTimeMillis()
+        AppLog.d(
+            TAG,
+            "airplay request conn=$connectionId phase=$requestPhase method=$method path=${route.path} query=${route.query.ifBlank { "-" }} cseq=${headers["cseq"].orEmpty().ifBlank { "-" }} session=${headers["x-apple-session-id"].orEmpty().ifBlank { "-" }} ua=${summarizeHeader(headers["user-agent"])} ct=${summarizeHeader(headers["content-type"])} from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}",
+        )
+        val requesterId = buildRequesterId(client = client, headers = headers)
 
-        val contentLength = headers["content-length"]?.toIntOrNull()?.coerceIn(0, BODY_MAX_BYTES) ?: 0
-        val bodyBytes = if (contentLength > 0) readFixedBytes(input, contentLength) else ByteArray(0)
+        val transferEncoding = headers["transfer-encoding"].orEmpty()
+        val contentLength = headers["content-length"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        var responseStatus = "200 OK"
+        var responseBodyBytes = 0
+        var responseContentType = "text/plain"
+        fun respond(
+            status: String,
+            body: String,
+            contentType: String,
+            extraHeaders: Map<String, String> = emptyMap(),
+            connectionHeader: String = "close",
+            includeContentLength: Boolean = true,
+        ) {
+            responseStatus = status
+            responseBodyBytes = body.toByteArray(StandardCharsets.UTF_8).size
+            responseContentType = contentType
+            writeResponse(
+                output = output,
+                status = status,
+                body = body,
+                contentType = contentType,
+                extraHeaders = extraHeaders,
+                connectionHeader = connectionHeader,
+                includeContentLength = includeContentLength,
+                requestHeaders = headers,
+            )
+            AppLog.d(
+                TAG,
+                "airplay response conn=$connectionId phase=$requestPhase status=$status bodyBytes=$responseBodyBytes elapsedMs=${System.currentTimeMillis() - reqStartMs}",
+            )
+        }
+        if (!transferEncoding.contains("chunked", ignoreCase = true) && contentLength > BODY_MAX_BYTES) {
+            AppLog.w(TAG, "airplay request too large contentLength=$contentLength")
+            closeReason = "payload-too-large"
+            respond(status = "413 Payload Too Large", body = "payload too large", contentType = "text/plain")
+            return
+        }
+        val bodyBytes =
+            if (transferEncoding.contains("chunked", ignoreCase = true)) {
+                readChunkedBody(input = input, maxBytes = BODY_MAX_BYTES)
+            } else if (contentLength > 0) {
+                readFixedBytes(input, contentLength)
+            } else {
+                ByteArray(0)
+            }
         val body = String(bodyBytes, StandardCharsets.UTF_8)
 
         when {
             method == "OPTIONS" -> {
-                writeResponse(
-                    output,
+                respond(
                     status = "200 OK",
                     body = "",
                     contentType = "text/plain",
                     extraHeaders =
                         mapOf(
-                            "Public" to "OPTIONS, SETUP, GET, POST, PUT, TEARDOWN, FLUSH, PLAY, PAUSE",
+                            "Public" to "OPTIONS, SETUP, GET, POST, PUT, TEARDOWN, FLUSH, PLAY, PAUSE, RECORD",
                             "Server" to "AirTunes/220.68",
                             "Apple-Jack-Status" to "connected; type=digital",
                             "Audio-Latency" to "0",
                         ),
-                    requestHeaders = headers,
                 )
             }
 
             method == "GET" && route.path == "/server-info" -> {
                 AppLog.d(TAG, "airplay server-info")
-                writeResponse(
-                    output,
+                respond(
                     status = "200 OK",
                     body = buildServerInfoPlist(),
                     contentType = "text/x-apple-plist+xml",
-                    requestHeaders = headers,
                 )
             }
 
             method == "GET" && route.path == "/info" -> {
                 AppLog.d(TAG, "airplay info")
-                writeResponse(
-                    output,
+                respond(
                     status = "200 OK",
                     body = buildInfoPlist(),
                     contentType = "text/x-apple-plist+xml",
-                    requestHeaders = headers,
                 )
             }
 
             method == "GET" && route.path == "/playback-info" -> {
                 AppLog.d(TAG, "airplay playback-info state=$sessionState")
                 val snap = CastPlaybackBridge.snapshot()
-                writeResponse(
-                    output,
+                respond(
                     status = "200 OK",
                     body = buildPlaybackInfoPlist(snapshot = snap),
                     contentType = "text/x-apple-plist+xml",
-                    requestHeaders = headers,
                 )
             }
 
             method == "POST" && route.path == "/reverse" -> {
                 reverseSessionId = headers["x-apple-session-id"]?.trim()
                 AppLog.i(TAG, "airplay reverse session=${reverseSessionId.orEmpty()}")
-                writeResponse(
-                    output,
+                respond(
                     status = "101 Switching Protocols",
                     body = "",
                     contentType = "text/plain",
                     extraHeaders =
                         mapOf(
                             "Upgrade" to "PTTH/1.0",
-                            "Connection" to "Upgrade",
                         ),
-                    requestHeaders = headers,
+                    connectionHeader = "Upgrade",
+                    includeContentLength = false,
                 )
                 // Keep reverse channel alive; many iPhone senders require this upgraded socket
                 // to stay open, otherwise they show "cannot connect".
                 holdReverseChannel(client = client, input = input)
+                closeReason = "reverse-channel-end"
             }
 
-            method == "POST" && route.path == "/setup" -> {
-                AppLog.i(TAG, "airplay setup")
-                writeResponse(
-                    output,
+            (method == "POST" || method == "SETUP") && route.path == "/setup" -> {
+                AppLog.i(TAG, "airplay setup phase=control")
+                respond(
                     status = "200 OK",
                     body = buildSetupPlist(),
                     contentType = "text/x-apple-plist+xml",
-                    requestHeaders = headers,
                 )
             }
 
-            method == "POST" && route.path == "/play" -> {
+            method == "POST" && route.path == "/pair-setup" -> {
+                AppLog.i(TAG, "airplay pair-setup phase=auth")
+                respond(status = "200 OK", body = "", contentType = "application/octet-stream")
+            }
+
+            method == "POST" && route.path == "/pair-verify" -> {
+                AppLog.i(TAG, "airplay pair-verify phase=auth")
+                respond(status = "200 OK", body = "", contentType = "application/octet-stream")
+            }
+
+            method == "POST" && (route.path == "/fp-setup" || route.path == "/auth-setup") -> {
+                AppLog.i(TAG, "airplay fairplay setup endpoint=${route.path}")
+                respond(status = "200 OK", body = "", contentType = "application/octet-stream")
+            }
+
+            (method == "POST" || method == "PUT" || method == "PLAY") && route.path == "/play" -> {
+                val allowControl = CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_AIRPLAY, requesterId, reason = "play")
+                if (!allowControl) {
+                    closeReason = "conflict-owner"
+                    respond(status = "409 Conflict", body = "another sender is active", contentType = "text/plain")
+                    return
+                }
                 val url = extractPlayUrl(body = body, headers = headers)
                 if (url.isNullOrBlank()) {
                     val controlled = CastPlaybackBridge.play()
                     AppLog.i(TAG, "airplay play without url controlled=$controlled")
                     if (!controlled) {
-                        writeResponse(
-                            output,
+                        CastSessionCoordinator.releaseIfOwner(PROTOCOL_AIRPLAY, requesterId, reason = "play-no-url-no-controller")
+                        closeReason = "play-missing-url"
+                        respond(
                             status = "400 Bad Request",
                             body = "missing url",
                             contentType = "text/plain",
-                            requestHeaders = headers,
                         )
                         return
                     }
@@ -251,7 +347,7 @@ class AirPlayReceiverService : Service() {
                     val duplicated = lastPlayUrl == url && now - lastPlayAtMs in 0..DUPLICATE_PLAY_WINDOW_MS
                     if (duplicated) {
                         AppLog.i(TAG, "airplay duplicate play ignored")
-                        writeResponse(output, status = "200 OK", body = "", contentType = "text/plain", requestHeaders = headers)
+                        respond(status = "200 OK", body = "", contentType = "text/plain")
                         return
                     }
                     lastPlayUrl = url
@@ -260,17 +356,28 @@ class AirPlayReceiverService : Service() {
                     AppLog.i(TAG, "airplay play url=$url")
                     DlnaCastIntentRouter.handleIncomingUri(applicationContext, url)
                 }
-                writeResponse(output, status = "200 OK", body = "", contentType = "text/plain", requestHeaders = headers)
+                respond(status = "200 OK", body = "", contentType = "text/plain")
             }
 
             method == "POST" && route.path == "/stop" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_AIRPLAY, requesterId, reason = "stop")) {
+                    closeReason = "conflict-owner"
+                    respond(status = "409 Conflict", body = "another sender is active", contentType = "text/plain")
+                    return
+                }
                 sessionState = "stopped"
                 val controlled = CastPlaybackBridge.stop()
                 AppLog.i(TAG, "airplay stop controlled=$controlled")
-                writeResponse(output, status = "200 OK", body = "", contentType = "text/plain", requestHeaders = headers)
+                CastSessionCoordinator.releaseIfOwner(PROTOCOL_AIRPLAY, requesterId, reason = "stop")
+                respond(status = "200 OK", body = "", contentType = "text/plain")
             }
 
             method == "POST" && route.path == "/rate" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_AIRPLAY, requesterId, reason = "rate")) {
+                    closeReason = "conflict-owner"
+                    respond(status = "409 Conflict", body = "another sender is active", contentType = "text/plain")
+                    return
+                }
                 val value = parseRateValue(path = route.rawTarget, body = body)
                 sessionState = if (value <= 0.0) "paused" else "playing"
                 val controlled =
@@ -280,7 +387,7 @@ class AirPlayReceiverService : Service() {
                         CastPlaybackBridge.play()
                     }
                 AppLog.i(TAG, "airplay rate value=$value state=$sessionState controlled=$controlled")
-                writeResponse(output, status = "200 OK", body = "", contentType = "text/plain", requestHeaders = headers)
+                respond(status = "200 OK", body = "", contentType = "text/plain")
             }
 
             method == "GET" && route.path == "/scrub" -> {
@@ -289,28 +396,41 @@ class AirPlayReceiverService : Service() {
                 val durationSec = (snap?.durationMs ?: 0L).coerceAtLeast(0L) / 1000.0
                 val positionSec = (snap?.positionMs ?: 0L).coerceAtLeast(0L) / 1000.0
                 val responseBody = "duration: ${"%.6f".format(Locale.US, durationSec)}\r\nposition: ${"%.6f".format(Locale.US, positionSec)}\r\n"
-                writeResponse(output, status = "200 OK", body = responseBody, contentType = "text/parameters", requestHeaders = headers)
+                respond(status = "200 OK", body = responseBody, contentType = "text/parameters")
             }
 
             method == "POST" && route.path == "/scrub" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_AIRPLAY, requesterId, reason = "scrub")) {
+                    closeReason = "conflict-owner"
+                    respond(status = "409 Conflict", body = "another sender is active", contentType = "text/plain")
+                    return
+                }
                 // AirPlay seek command: position can be in path query or body.
                 val posSec = parseScrubPositionSec(path = route.rawTarget, body = body)
                 val controlled = if (posSec != null && posSec >= 0.0) CastPlaybackBridge.seekTo((posSec * 1000.0).toLong()) else false
                 AppLog.i(TAG, "airplay scrub seekSec=${posSec ?: -1.0} controlled=$controlled")
-                writeResponse(output, status = "200 OK", body = "", contentType = "text/plain", requestHeaders = headers)
+                respond(status = "200 OK", body = "", contentType = "text/plain")
             }
 
-            method == "POST" && (route.path == "/photo" || route.path == "/feedback") -> {
+            method == "POST" && (route.path == "/photo" || route.path == "/feedback" || route.path == "/record" || route.path == "/flush" || route.path == "/teardown" || route.path == "/stream") -> {
                 AppLog.d(TAG, "airplay endpoint accepted path=${route.path}")
-                writeResponse(output, status = "200 OK", body = "", contentType = "text/plain", requestHeaders = headers)
+                respond(status = "200 OK", body = "", contentType = "text/plain")
             }
 
             else -> {
                 // Return 200 for unknown control endpoints to avoid clients dropping this receiver early.
                 AppLog.d(TAG, "airplay unknown endpoint path=${route.path} rawTarget=${route.rawTarget}")
-                writeResponse(output, status = "200 OK", body = "", contentType = "text/plain", requestHeaders = headers)
+                respond(status = "200 OK", body = "", contentType = "text/plain")
             }
         }
+        AppLog.i(
+            TAG,
+            "airplay request done conn=$connectionId phase=$requestPhase method=$method path=${route.path} status=$responseStatus respType=$responseContentType bodyBytes=$responseBodyBytes elapsedMs=${System.currentTimeMillis() - reqStartMs}",
+        )
+        AppLog.i(
+            TAG,
+            "airplay connection closed conn=$connectionId reason=$closeReason totalMs=${System.currentTimeMillis() - connStartMs}",
+        )
     }
 
     /**
@@ -349,18 +469,12 @@ class AirPlayReceiverService : Service() {
                 serviceType = "_airplay._tcp"
                 this.port = this@AirPlayReceiverService.port
                 setAttribute("deviceid", deviceIdColon)
-                setAttribute("features", "0x5A7FFFF7,0x1E")
+                setAttribute("features", AIRPLAY_FEATURES_TXT)
                 setAttribute("flags", "0x4")
-                setAttribute("model", "AppleTV3,2")
-                setAttribute("srcvers", "220.68")
-                setAttribute("rhd", "5.6.0.0")
-                setAttribute("fv", "p20.10.00.4102")
-                setAttribute("pk", deviceUuid.replace("-", ""))
-                setAttribute("gcgl", "0")
-                setAttribute("acl", "0")
-                setAttribute("rsf", "0x0")
-                setAttribute("vv", "2")
+                setAttribute("model", AIRPLAY_MODEL)
+                setAttribute("srcvers", AIRPLAY_SRC_VERS)
                 setAttribute("pi", deviceUuid)
+                setAttribute("pk", publicKeyHex)
             }
 
         val raopInfo =
@@ -378,14 +492,17 @@ class AirPlayReceiverService : Service() {
                 setAttribute("tp", "UDP")
                 setAttribute("da", "true")
                 setAttribute("sv", "false")
-                setAttribute("ft", "0x5A7FFFF7,0x1E")
-                setAttribute("am", "AppleTV3,2")
-                setAttribute("vs", "220.68")
+                setAttribute("ft", AIRPLAY_FEATURES_TXT)
+                setAttribute("am", AIRPLAY_MODEL)
+                setAttribute("vs", AIRPLAY_SRC_VERS)
                 setAttribute("sf", "0x4")
-                setAttribute("pk", deviceUuid.replace("-", ""))
                 setAttribute("vn", "65537")
-                setAttribute("txtvers", "1")
+                setAttribute("pk", publicKeyHex)
             }
+        AppLog.i(
+            TAG,
+            "airplay nsd profile model=$AIRPLAY_MODEL srcvers=$AIRPLAY_SRC_VERS features=$AIRPLAY_FEATURES_TXT deviceid=$deviceIdColon pi=$deviceUuid pkLen=${publicKeyHex.length}",
+        )
 
         val airListener =
             object : NsdManager.RegistrationListener {
@@ -441,6 +558,19 @@ class AirPlayReceiverService : Service() {
             runCatching { mgr.unregisterService(l) }
             raopListener = null
         }
+    }
+
+    private fun acquireMulticastLock() {
+        val manager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+        val lock = manager.createMulticastLock("blbl-airplay-cast").apply {
+            setReferenceCounted(false)
+        }
+        runCatching { lock.acquire() }
+            .onSuccess {
+                multicastLock = lock
+                AppLog.i(TAG, "airplay multicast lock acquired")
+            }
+            .onFailure { AppLog.w(TAG, "airplay acquire multicast lock failed", it) }
     }
 
     private fun extractPlayUrl(body: String, headers: Map<String, String>): String? {
@@ -531,12 +661,73 @@ class AirPlayReceiverService : Service() {
         return if (read == size) target else target.copyOf(min(read, size))
     }
 
+    private fun readChunkedBody(
+        input: BufferedInputStream,
+        maxBytes: Int,
+    ): ByteArray {
+        val out = ByteArrayOutputStream()
+        while (true) {
+            val sizeLine = readAsciiLine(input).trim()
+            if (sizeLine.isBlank()) continue
+            val size = sizeLine.substringBefore(';').trim().toIntOrNull(16) ?: break
+            if (size <= 0) {
+                while (true) {
+                    val trailer = readAsciiLine(input)
+                    if (trailer.isBlank()) break
+                }
+                break
+            }
+            val remain = (maxBytes - out.size()).coerceAtLeast(0)
+            if (remain <= 0) {
+                skipBytes(input, size + 2)
+                continue
+            }
+            val chunk = readFixedBytes(input, min(size, remain))
+            if (chunk.isNotEmpty()) out.write(chunk)
+            if (size > remain) {
+                skipBytes(input, size - remain)
+            }
+            skipBytes(input, 2)
+        }
+        return out.toByteArray()
+    }
+
+    private fun readAsciiLine(input: BufferedInputStream): String {
+        val out = ByteArrayOutputStream()
+        while (true) {
+            val b = input.read()
+            if (b < 0) break
+            if (b == '\n'.code) break
+            if (b != '\r'.code) out.write(b)
+            if (out.size() >= 8 * 1024) break
+        }
+        return out.toString(StandardCharsets.ISO_8859_1.name())
+    }
+
+    private fun skipBytes(
+        input: BufferedInputStream,
+        count: Int,
+    ) {
+        var remaining = count.coerceAtLeast(0)
+        while (remaining > 0) {
+            val skipped = input.skip(remaining.toLong())
+            if (skipped > 0) {
+                remaining -= skipped.toInt()
+                continue
+            }
+            if (input.read() < 0) break
+            remaining--
+        }
+    }
+
     private fun writeResponse(
         output: BufferedOutputStream,
         status: String,
         body: String,
         contentType: String,
         extraHeaders: Map<String, String> = emptyMap(),
+        connectionHeader: String = "close",
+        includeContentLength: Boolean = true,
         requestHeaders: Map<String, String> = emptyMap(),
     ) {
         val bytes = body.toByteArray(StandardCharsets.UTF_8)
@@ -546,8 +737,10 @@ class AirPlayReceiverService : Service() {
             StringBuilder().apply {
                 append("HTTP/1.1 ").append(status).append("\r\n")
                 append("Content-Type: ").append(contentType).append("\r\n")
-                append("Content-Length: ").append(bytes.size).append("\r\n")
-                append("Connection: close\r\n")
+                if (includeContentLength) {
+                    append("Content-Length: ").append(bytes.size).append("\r\n")
+                }
+                append("Connection: ").append(connectionHeader).append("\r\n")
                 append("Server: AirTunes/220.68\r\n")
                 append("Date: ").append(httpDate()).append("\r\n")
                 if (cseq.isNotBlank()) append("CSeq: ").append(cseq).append("\r\n")
@@ -560,6 +753,16 @@ class AirPlayReceiverService : Service() {
         output.write(sb.toString().toByteArray(StandardCharsets.UTF_8))
         output.write(bytes)
         output.flush()
+    }
+
+    private fun writeServiceUnavailable(client: Socket) {
+        val output = BufferedOutputStream(client.getOutputStream())
+        writeResponse(
+            output = output,
+            status = "503 Service Unavailable",
+            body = "receiver busy",
+            contentType = "text/plain",
+        )
     }
 
     private fun holdReverseChannel(
@@ -585,6 +788,16 @@ class AirPlayReceiverService : Service() {
         AppLog.i(TAG, "airplay reverse channel hold end")
     }
 
+    private fun buildRequesterId(
+        client: Socket,
+        headers: Map<String, String>,
+    ): String {
+        val sessionId = headers["x-apple-session-id"]?.trim().orEmpty()
+        if (sessionId.isNotBlank()) return "sid:$sessionId"
+        val host = client.inetAddress?.hostAddress?.trim().orEmpty()
+        return if (host.isNotBlank()) "ip:$host" else "ip:unknown"
+    }
+
     private fun buildServerInfoPlist(): String =
         """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -592,10 +805,13 @@ class AirPlayReceiverService : Service() {
         <plist version="1.0">
           <dict>
             <key>deviceid</key><string>$deviceIdColon</string>
-            <key>features</key><integer>2251799813685247</integer>
-            <key>model</key><string>AppleTV3,2</string>
+            <key>features</key><integer>${airplayFeaturesToPlistInteger(AIRPLAY_FEATURES_TXT)}</integer>
+            <key>model</key><string>$AIRPLAY_MODEL</string>
             <key>protovers</key><string>1.1</string>
-            <key>srcvers</key><string>220.68</string>
+            <key>srcvers</key><string>$AIRPLAY_SRC_VERS</string>
+            <key>statusFlags</key><integer>4</integer>
+            <key>pi</key><string>$deviceUuid</string>
+            <key>pk</key><data>$publicKeyHex</data>
           </dict>
         </plist>
         """.trimIndent()
@@ -606,14 +822,17 @@ class AirPlayReceiverService : Service() {
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
           <dict>
+            <key>deviceid</key><string>$deviceIdColon</string>
             <key>deviceID</key><string>$deviceIdColon</string>
-            <key>features</key><integer>2251799813685247</integer>
-            <key>model</key><string>AppleTV3,2</string>
+            <key>features</key><integer>${airplayFeaturesToPlistInteger(AIRPLAY_FEATURES_TXT)}</integer>
+            <key>model</key><string>$AIRPLAY_MODEL</string>
             <key>name</key><string>Blbl AirPlay</string>
             <key>protovers</key><string>1.1</string>
-            <key>sourceVersion</key><string>220.68</string>
+            <key>srcvers</key><string>$AIRPLAY_SRC_VERS</string>
+            <key>sourceVersion</key><string>$AIRPLAY_SRC_VERS</string>
             <key>statusFlags</key><integer>4</integer>
             <key>pi</key><string>$deviceUuid</string>
+            <key>pk</key><data>$publicKeyHex</data>
           </dict>
         </plist>
         """.trimIndent()
@@ -672,13 +891,46 @@ class AirPlayReceiverService : Service() {
         return derived
     }
 
+    private fun summarizeHeader(value: String?): String {
+        val v = value?.trim().orEmpty()
+        if (v.isBlank()) return "-"
+        return if (v.length <= 96) v else "${v.take(96)}..."
+    }
+
+    private fun classifyAirPlayPhase(
+        method: String,
+        path: String,
+    ): String {
+        if (path == "/info" || path == "/server-info") return "discovery"
+        if (path == "/pair-setup" || path == "/pair-verify" || path == "/fp-setup" || path == "/auth-setup") return "auth"
+        if (path == "/setup" || path == "/reverse") return "setup"
+        if (path == "/play" || path == "/rate" || path == "/scrub" || path == "/stop") return "control"
+        if (path == "/record" || path == "/flush" || path == "/teardown" || path == "/stream") return "media"
+        if (method == "OPTIONS") return "capability"
+        return "other"
+    }
+
+    private fun airplayFeaturesToPlistInteger(txt: String): Long {
+        val parts = txt.split(',').map { it.trim().removePrefix("0x").removePrefix("0X") }
+        val low = parts.getOrNull(0)?.toLongOrNull(16) ?: 0L
+        val high = parts.getOrNull(1)?.toLongOrNull(16) ?: 0L
+        return (high shl 32) or (low and 0xFFFFFFFFL)
+    }
+
     companion object {
         private const val TAG = "AirPlayReceiver"
+        private const val PROTOCOL_AIRPLAY = "airplay"
+        // Discovery-first profile:
+        // keep iOS mirror-list visibility (feature bits) while still returning stable pi/pk identifiers.
+        private const val AIRPLAY_FEATURES_TXT = "0x5A7FFFF7,0x1E"
+        private const val AIRPLAY_MODEL = "AppleTV3,2"
+        private const val AIRPLAY_SRC_VERS = "220.68"
         private const val PREFS_NAME = "airplay_cast"
         private const val KEY_DEVICE_UUID = "device_uuid"
         private const val HEADER_MAX_BYTES = 16 * 1024
         private const val BODY_MAX_BYTES = 512 * 1024
         private const val DUPLICATE_PLAY_WINDOW_MS = 1500L
+        private const val MAX_ACTIVE_CLIENTS = 32
         private val REVERSE_SOCKET_TIMEOUT_MS = 120.seconds.inWholeMilliseconds.toInt()
 
         fun syncService(context: Context, enabled: Boolean) {

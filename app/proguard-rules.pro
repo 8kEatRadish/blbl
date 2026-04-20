@@ -10,3 +10,14 @@
 # Without this, release (R8) obfuscation can make `libijkplayer.so` fail to bind and crash on startup.
 -keep class tv.danmaku.ijk.** { *; }
 -keep class com.debugly.ijkplayer.** { *; }
+
+# Keep cast receiver protocol stack stable in release.
+# AirPlay/DLNA handshake is sensitive to subtle HTTP behavior; keep these classes
+# unoptimized/unobfuscated so release follows the same control path as debug.
+-keep class blbl.cat3399.feature.cast.AirPlayReceiverService { *; }
+-keep class blbl.cat3399.feature.cast.AirPlayReceiverService$* { *; }
+-keep class blbl.cat3399.feature.cast.DlnaCastReceiverService { *; }
+-keep class blbl.cat3399.feature.cast.DlnaCastReceiverService$* { *; }
+-keep class blbl.cat3399.feature.cast.CastSessionCoordinator { *; }
+-keep class blbl.cat3399.feature.cast.CastPlaybackBridge { *; }
+-keep class blbl.cat3399.feature.cast.DlnaCastIntentRouter { *; }

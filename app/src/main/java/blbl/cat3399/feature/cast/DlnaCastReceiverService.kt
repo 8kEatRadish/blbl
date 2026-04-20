@@ -3,6 +3,8 @@ package blbl.cat3399.feature.cast
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.wifi.WifiManager
 import android.os.IBinder
 import blbl.cat3399.BuildConfig
@@ -15,10 +17,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
-import java.io.BufferedReader
-import java.io.BufferedWriter
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -36,6 +36,8 @@ import java.util.TimeZone
 import java.util.UUID
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.min
 
 /**
  * Minimal DLNA DMR receiver:
@@ -53,6 +55,8 @@ class DlnaCastReceiverService : Service() {
     private var multicastSocket: MulticastSocket? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private val running = AtomicBoolean(false)
+    private val activeHttpClientCount = AtomicInteger(0)
+    private val httpConnectionSeq = AtomicInteger(0)
 
     @Volatile
     private var currentTransportUri: String = ""
@@ -65,6 +69,9 @@ class DlnaCastReceiverService : Service() {
 
     @Volatile
     private var lastRoutedTransportUri: String = ""
+
+    @Volatile
+    private var currentPlayMode: String = "NORMAL"
 
     private val deviceUdn: String by lazy { "uuid:${loadOrCreateDeviceUuid()}" }
 
@@ -81,6 +88,7 @@ class DlnaCastReceiverService : Service() {
 
     override fun onDestroy() {
         running.set(false)
+        CastSessionCoordinator.clearProtocol(PROTOCOL_DLNA)
         runCatching { sendSsdpNotify(byebye = true) }
         runCatching { httpServerSocket?.close() }
         runCatching { multicastSocket?.close() }
@@ -111,11 +119,20 @@ class DlnaCastReceiverService : Service() {
                 AppLog.i(TAG, "http server started port=$httpPort")
                 while (running.get()) {
                     val client = runCatching { server.accept() }.getOrNull() ?: break
-                    AppLog.d(TAG, "http accepted from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}")
-                    scope.launch {
-                        runCatching { handleHttpClient(client) }
-                            .onFailure { AppLog.w(TAG, "handle http client failed", it) }
+                    if (activeHttpClientCount.incrementAndGet() > MAX_ACTIVE_HTTP_CLIENTS) {
+                        activeHttpClientCount.decrementAndGet()
+                        AppLog.w(TAG, "http reject busy from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}")
+                        runCatching { writeServiceUnavailable(client) }
                         runCatching { client.close() }
+                        continue
+                    }
+                    val connectionId = httpConnectionSeq.incrementAndGet()
+                    AppLog.d(TAG, "http accepted conn=$connectionId from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}")
+                    scope.launch {
+                        runCatching { handleHttpClient(client = client, connectionId = connectionId) }
+                            .onFailure { AppLog.w(TAG, "handle http client failed conn=$connectionId", it) }
+                        runCatching { client.close() }
+                        activeHttpClientCount.decrementAndGet()
                     }
                 }
             }
@@ -131,10 +148,9 @@ class DlnaCastReceiverService : Service() {
                     }
                 multicastSocket = socket
                 val group = InetAddress.getByName(SSDP_HOST)
-                runCatching {
-                    socket.joinGroup(group)
-                }.onFailure {
-                    AppLog.w(TAG, "join multicast group failed", it)
+                val joined = joinSsdpGroupOnAvailableInterfaces(socket, group)
+                if (!joined) {
+                    AppLog.w(TAG, "join multicast group failed on all interfaces")
                     return@launch
                 }
                 AppLog.i(TAG, "ssdp responder started")
@@ -170,151 +186,279 @@ class DlnaCastReceiverService : Service() {
             }
     }
 
-    private fun handleHttpClient(client: Socket) {
+    private fun handleHttpClient(
+        client: Socket,
+        connectionId: Int,
+    ) {
+        val connStartMs = System.currentTimeMillis()
+        var closeReason = "normal"
         client.soTimeout = 5_000
-        // Use ISO-8859-1 for raw HTTP framing so Content-Length (bytes) matches read unit.
-        // Later we decode body bytes as UTF-8.
-        val reader = BufferedReader(InputStreamReader(client.getInputStream(), StandardCharsets.ISO_8859_1))
-        val writer = BufferedWriter(OutputStreamWriter(client.getOutputStream(), StandardCharsets.UTF_8))
+        client.keepAlive = true
+        client.tcpNoDelay = true
+        val input = BufferedInputStream(client.getInputStream())
+        val output = BufferedOutputStream(client.getOutputStream())
 
-        val requestLine = reader.readLine()?.trim().orEmpty()
+        val headerBytes = readUntilHeaderEnd(input, HTTP_HEADER_MAX_BYTES)
+        if (headerBytes.isEmpty()) return
+        val requestHeader = String(headerBytes, StandardCharsets.ISO_8859_1)
+        val headerBlocks = requestHeader.split("\r\n\r\n", limit = 2)
+        val lines = headerBlocks.firstOrNull()?.split("\r\n").orEmpty()
+        val requestLine = lines.firstOrNull()?.trim().orEmpty()
         if (requestLine.isBlank()) return
         val parts = requestLine.split(' ')
         if (parts.size < 2) {
-            writeHttpResponse(writer, status = "400 Bad Request", body = "bad request", contentType = "text/plain")
+            writeHttpResponse(output, status = "400 Bad Request", body = "bad request", contentType = "text/plain")
             return
         }
         val method = parts[0].uppercase(Locale.US)
         val requestTarget = parts[1]
         val routePath = normalizeRoutePath(requestTarget)
+        val reqStartMs = System.currentTimeMillis()
         AppLog.d(
             TAG,
-            "http request method=$method path=$routePath rawTarget=$requestTarget from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}",
+            "http request conn=$connectionId method=$method path=$routePath rawTarget=$requestTarget from=${client.inetAddress?.hostAddress.orEmpty()}:${client.port}",
         )
-        val headers = readHeaders(reader)
+        val headers = parseHttpHeaders(requestHeader)
+        AppLog.d(
+            TAG,
+            "http request headers conn=$connectionId soap=${summarizeHeader(headers["soapaction"])} ua=${summarizeHeader(headers["user-agent"])} callback=${summarizeHeader(headers["callback"])} sid=${headers["sid"].orEmpty().ifBlank { "-" }}",
+        )
+        val requesterId = buildRequesterId(client)
         val expect = headers["expect"].orEmpty()
         val transferEncoding = headers["transfer-encoding"].orEmpty()
         val contentLength = headers["content-length"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
         AppLog.d(TAG, "http body meta expect=$expect transferEncoding=$transferEncoding contentLength=$contentLength")
+        var responseStatus = "200 OK"
+        var responseBodyBytes = 0
+        fun respond(
+            status: String,
+            body: String,
+            contentType: String,
+            extraHeaders: Map<String, String> = emptyMap(),
+        ) {
+            responseStatus = status
+            val responseBody = if (method == "HEAD") "" else body
+            responseBodyBytes = responseBody.toByteArray(StandardCharsets.UTF_8).size
+            writeHttpResponse(
+                output = output,
+                status = status,
+                body = responseBody,
+                contentType = contentType,
+                extraHeaders = extraHeaders,
+            )
+            AppLog.d(
+                TAG,
+                "http response conn=$connectionId method=$method path=$routePath status=$status bodyBytes=$responseBodyBytes elapsedMs=${System.currentTimeMillis() - reqStartMs}",
+            )
+        }
+        if (!transferEncoding.contains("chunked", ignoreCase = true) && contentLength > HTTP_BODY_MAX_BYTES) {
+            closeReason = "payload-too-large"
+            respond(status = "413 Payload Too Large", body = "payload too large", contentType = "text/plain")
+            return
+        }
         if (expect.contains("100-continue", ignoreCase = true)) {
             AppLog.d(TAG, "sending 100-continue for $routePath")
-            writeContinueResponse(writer)
+            writeContinueResponse(output)
         }
-        val body = readHttpBody(reader = reader, headers = headers)
+        val body = readHttpBody(input = input, headers = headers)
 
         when {
-            method == "GET" && routePath == DESCRIPTION_PATH -> {
-                writeHttpResponse(writer, status = "200 OK", body = buildDeviceDescriptionXml(), contentType = XML_CONTENT_TYPE)
+            (method == "GET" || method == "HEAD") && routePath == DESCRIPTION_PATH -> {
+                respond(status = "200 OK", body = buildDeviceDescriptionXml(), contentType = XML_CONTENT_TYPE)
             }
 
-            method == "GET" && routePath == SCPD_AVTRANSPORT_PATH -> {
-                writeHttpResponse(writer, status = "200 OK", body = AV_TRANSPORT_SCPD_XML, contentType = XML_CONTENT_TYPE)
+            (method == "GET" || method == "HEAD") && routePath == SCPD_AVTRANSPORT_PATH -> {
+                respond(status = "200 OK", body = AV_TRANSPORT_SCPD_XML, contentType = XML_CONTENT_TYPE)
             }
 
-            method == "GET" && routePath == SCPD_RENDERING_PATH -> {
-                writeHttpResponse(writer, status = "200 OK", body = RENDERING_CONTROL_SCPD_XML, contentType = XML_CONTENT_TYPE)
+            (method == "GET" || method == "HEAD") && routePath == SCPD_RENDERING_PATH -> {
+                respond(status = "200 OK", body = RENDERING_CONTROL_SCPD_XML, contentType = XML_CONTENT_TYPE)
             }
 
-            method == "GET" && routePath == SCPD_CONNECTION_PATH -> {
-                writeHttpResponse(writer, status = "200 OK", body = CONNECTION_MANAGER_SCPD_XML, contentType = XML_CONTENT_TYPE)
+            (method == "GET" || method == "HEAD") && routePath == SCPD_CONNECTION_PATH -> {
+                respond(status = "200 OK", body = CONNECTION_MANAGER_SCPD_XML, contentType = XML_CONTENT_TYPE)
+            }
+
+            method == "SUBSCRIBE" && routePath == EVENT_PATH -> {
+                val sid = headers["sid"].orEmpty().ifBlank { "$deviceUdn-event" }
+                val timeout = headers["timeout"].orEmpty().ifBlank { "Second-1800" }
+                AppLog.i(TAG, "dlna event subscribe conn=$connectionId sid=$sid timeout=$timeout")
+                respond(
+                    status = "200 OK",
+                    body = "",
+                    contentType = "text/plain",
+                    extraHeaders = mapOf("SID" to sid, "TIMEOUT" to timeout),
+                )
+            }
+
+            method == "UNSUBSCRIBE" && routePath == EVENT_PATH -> {
+                val sid = headers["sid"].orEmpty()
+                AppLog.i(TAG, "dlna event unsubscribe conn=$connectionId sid=${sid.ifBlank { "-" }}")
+                respond(status = "200 OK", body = "", contentType = "text/plain")
             }
 
             method == "POST" && routePath == CONTROL_AVTRANSPORT_PATH -> {
                 val soapAction = headers["soapaction"].orEmpty().trim().trim('"')
                 val action = soapAction.substringAfter('#', "")
-                val soapBody = handleAvTransportAction(action = action, body = body)
-                writeHttpResponse(writer, status = "200 OK", body = soapBody, contentType = XML_CONTENT_TYPE)
+                val soapBody = handleAvTransportAction(action = action, body = body, requesterId = requesterId)
+                respond(status = "200 OK", body = soapBody, contentType = XML_CONTENT_TYPE)
             }
 
             method == "POST" && routePath == CONTROL_RENDERING_PATH -> {
                 val soapAction = headers["soapaction"].orEmpty().trim().trim('"')
                 val action = soapAction.substringAfter('#', "")
-                val soapBody = handleRenderingAction(action = action, body = body)
-                writeHttpResponse(writer, status = "200 OK", body = soapBody, contentType = XML_CONTENT_TYPE)
+                val soapBody = handleRenderingAction(action = action, body = body, requesterId = requesterId)
+                respond(status = "200 OK", body = soapBody, contentType = XML_CONTENT_TYPE)
             }
 
             method == "POST" && routePath == CONTROL_CONNECTION_PATH -> {
                 val soapAction = headers["soapaction"].orEmpty().trim().trim('"')
                 val action = soapAction.substringAfter('#', "")
-                val soapBody = handleConnectionAction(action = action)
-                writeHttpResponse(writer, status = "200 OK", body = soapBody, contentType = XML_CONTENT_TYPE)
+                val soapBody = handleConnectionAction(action = action, requesterId = requesterId)
+                respond(status = "200 OK", body = soapBody, contentType = XML_CONTENT_TYPE)
             }
 
             else -> {
-                writeHttpResponse(writer, status = "404 Not Found", body = "not found", contentType = "text/plain")
+                closeReason = "unknown-path"
+                respond(status = "404 Not Found", body = "not found", contentType = "text/plain")
             }
         }
+        AppLog.i(
+            TAG,
+            "http request done conn=$connectionId method=$method path=$routePath status=$responseStatus bodyBytes=$responseBodyBytes elapsedMs=${System.currentTimeMillis() - reqStartMs}",
+        )
+        AppLog.i(TAG, "http connection closed conn=$connectionId reason=$closeReason totalMs=${System.currentTimeMillis() - connStartMs}")
     }
 
-    private fun writeContinueResponse(writer: BufferedWriter) {
-        writer.write("HTTP/1.1 100 Continue\r\n")
-        writer.write("\r\n")
-        writer.flush()
+    private fun writeContinueResponse(output: BufferedOutputStream) {
+        output.write("HTTP/1.1 100 Continue\r\n\r\n".toByteArray(StandardCharsets.UTF_8))
+        output.flush()
     }
 
     private fun readHttpBody(
-        reader: BufferedReader,
+        input: BufferedInputStream,
         headers: Map<String, String>,
     ): String {
         val transferEncoding = headers["transfer-encoding"].orEmpty()
         return if (transferEncoding.contains("chunked", ignoreCase = true)) {
-            String(readChunkedBodyBytes(reader), StandardCharsets.UTF_8)
+            String(readChunkedBodyBytes(input, HTTP_BODY_MAX_BYTES), StandardCharsets.UTF_8)
         } else {
             val contentLength = headers["content-length"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
             if (contentLength <= 0) {
                 ""
             } else {
-                String(readFixedLengthBodyBytes(reader, contentLength), StandardCharsets.UTF_8)
+                String(readFixedLengthBodyBytes(input, contentLength), StandardCharsets.UTF_8)
             }
         }
     }
 
     private fun readFixedLengthBodyBytes(
-        reader: BufferedReader,
+        input: BufferedInputStream,
         contentLength: Int,
     ): ByteArray {
-        val chars = CharArray(contentLength)
+        val target = ByteArray(contentLength)
         var read = 0
         while (read < contentLength) {
-            val n = reader.read(chars, read, contentLength - read)
+            val n = input.read(target, read, contentLength - read)
             if (n <= 0) break
             read += n
         }
-        if (read <= 0) return ByteArray(0)
-        val bytes = ByteArray(read)
-        for (i in 0 until read) {
-            bytes[i] = chars[i].code.toByte()
-        }
-        return bytes
+        return if (read == contentLength) target else target.copyOf(min(read, contentLength))
     }
 
-    private fun readChunkedBodyBytes(reader: BufferedReader): ByteArray {
+    private fun readChunkedBodyBytes(
+        input: BufferedInputStream,
+        maxBytes: Int,
+    ): ByteArray {
         val out = ByteArrayOutputStream()
         while (true) {
-            val sizeLine = reader.readLine()?.trim().orEmpty()
+            val sizeLine = readAsciiLine(input).trim()
             if (sizeLine.isBlank()) continue
             val sizeHex = sizeLine.substringBefore(';').trim()
             val chunkSize = sizeHex.toIntOrNull(16) ?: break
             if (chunkSize <= 0) {
                 // Consume optional trailer headers.
                 while (true) {
-                    val trailer = reader.readLine() ?: break
+                    val trailer = readAsciiLine(input)
                     if (trailer.isBlank()) break
                 }
                 break
             }
-            val chunk = readFixedLengthBodyBytes(reader, chunkSize)
+            val remain = (maxBytes - out.size()).coerceAtLeast(0)
+            if (remain <= 0) {
+                skipBytes(input, chunkSize + 2)
+                continue
+            }
+            val chunk = readFixedLengthBodyBytes(input, min(chunkSize, remain))
             if (chunk.isNotEmpty()) out.write(chunk)
-            // Consume chunk ending CRLF.
-            reader.read()
-            reader.read()
+            if (chunkSize > remain) {
+                skipBytes(input, chunkSize - remain)
+            }
+            skipBytes(input, 2) // chunk ending CRLF
         }
         return out.toByteArray()
     }
 
-    private fun handleAvTransportAction(action: String, body: String): String {
+    private fun readUntilHeaderEnd(
+        input: BufferedInputStream,
+        limit: Int,
+    ): ByteArray {
+        val out = ByteArrayOutputStream()
+        var matched = 0
+        val pattern = byteArrayOf('\r'.code.toByte(), '\n'.code.toByte(), '\r'.code.toByte(), '\n'.code.toByte())
+        while (out.size() < limit) {
+            val b = input.read()
+            if (b < 0) break
+            out.write(b)
+            if (b.toByte() == pattern[matched]) {
+                matched++
+                if (matched == 4) break
+            } else {
+                matched = if (b.toByte() == pattern[0]) 1 else 0
+            }
+        }
+        return out.toByteArray()
+    }
+
+    private fun readAsciiLine(input: BufferedInputStream): String {
+        val out = ByteArrayOutputStream()
+        while (true) {
+            val b = input.read()
+            if (b < 0) break
+            if (b == '\n'.code) break
+            if (b != '\r'.code) out.write(b)
+            if (out.size() >= 8 * 1024) break
+        }
+        return out.toString(StandardCharsets.ISO_8859_1.name())
+    }
+
+    private fun skipBytes(
+        input: BufferedInputStream,
+        count: Int,
+    ) {
+        var remaining = count.coerceAtLeast(0)
+        while (remaining > 0) {
+            val skipped = input.skip(remaining.toLong())
+            if (skipped > 0) {
+                remaining -= skipped.toInt()
+                continue
+            }
+            if (input.read() < 0) break
+            remaining--
+        }
+    }
+
+    private fun handleAvTransportAction(
+        action: String,
+        body: String,
+        requesterId: String,
+    ): String {
         return when (action) {
             "SetAVTransportURI" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_DLNA, requesterId, reason = "SetAVTransportURI")) {
+                    AppLog.i(TAG, "ignore SetAVTransportURI from non-owner requester=$requesterId")
+                    return soapResponse("u:SetAVTransportURIResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
+                }
                 val uri = extractSoapValue(body, "CurrentURI").orEmpty()
                 if (currentTransportUri != uri) {
                     // New transport target should be routed only once on next Play.
@@ -327,6 +471,10 @@ class DlnaCastReceiverService : Service() {
             }
 
             "SetNextAVTransportURI" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_DLNA, requesterId, reason = "SetNextAVTransportURI")) {
+                    AppLog.i(TAG, "ignore SetNextAVTransportURI from non-owner requester=$requesterId")
+                    return soapResponse("u:SetNextAVTransportURIResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
+                }
                 // Many senders probe this action before playback queueing.
                 val uri = extractSoapValue(body, "NextURI").orEmpty()
                 AppLog.i(TAG, "SetNextAVTransportURI nextUri=$uri")
@@ -334,6 +482,10 @@ class DlnaCastReceiverService : Service() {
             }
 
             "Play" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_DLNA, requesterId, reason = "Play")) {
+                    AppLog.i(TAG, "ignore Play from non-owner requester=$requesterId")
+                    return soapResponse("u:PlayResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
+                }
                 val uri = currentTransportUri
                 if (uri.isNotBlank()) {
                     val alreadyRouted = lastRoutedTransportUri == uri
@@ -358,6 +510,10 @@ class DlnaCastReceiverService : Service() {
             }
 
             "Pause" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_DLNA, requesterId, reason = "Pause")) {
+                    AppLog.i(TAG, "ignore Pause from non-owner requester=$requesterId")
+                    return soapResponse("u:PauseResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
+                }
                 currentTransportState = "PAUSED_PLAYBACK"
                 val controlled = CastPlaybackBridge.pause()
                 AppLog.i(TAG, "Pause controlled=$controlled")
@@ -365,9 +521,14 @@ class DlnaCastReceiverService : Service() {
             }
 
             "Stop" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_DLNA, requesterId, reason = "Stop")) {
+                    AppLog.i(TAG, "ignore Stop from non-owner requester=$requesterId")
+                    return soapResponse("u:StopResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
+                }
                 currentTransportState = "STOPPED"
                 val controlled = CastPlaybackBridge.stop()
                 AppLog.i(TAG, "Stop controlled=$controlled")
+                CastSessionCoordinator.releaseIfOwner(PROTOCOL_DLNA, requesterId, reason = "Stop")
                 soapResponse("u:StopResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
             }
 
@@ -418,12 +579,56 @@ class DlnaCastReceiverService : Service() {
             }
 
             "Seek" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_DLNA, requesterId, reason = "Seek")) {
+                    AppLog.i(TAG, "ignore Seek from non-owner requester=$requesterId")
+                    return soapResponse("u:SeekResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
+                }
                 val unit = extractSoapValue(body, "Unit").orEmpty()
                 val target = extractSoapValue(body, "Target").orEmpty()
                 val seekMs = parseDlnaSeekTargetMs(target)
                 val controlled = if (seekMs != null) CastPlaybackBridge.seekTo(seekMs) else false
                 AppLog.i(TAG, "Seek unit=$unit target=$target seekMs=${seekMs ?: -1L} controlled=$controlled")
                 soapResponse("u:SeekResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
+            }
+
+            "GetDeviceCapabilities" -> {
+                soapResponse(
+                    "u:GetDeviceCapabilitiesResponse",
+                    "urn:schemas-upnp-org:service:AVTransport:1",
+                    "<PlayMedia>NETWORK</PlayMedia>" +
+                        "<RecMedia>NOT_IMPLEMENTED</RecMedia>" +
+                        "<RecQualityModes>NOT_IMPLEMENTED</RecQualityModes>",
+                )
+            }
+
+            "GetTransportSettings" -> {
+                soapResponse(
+                    "u:GetTransportSettingsResponse",
+                    "urn:schemas-upnp-org:service:AVTransport:1",
+                    "<PlayMode>$currentPlayMode</PlayMode>" +
+                        "<RecQualityMode>NOT_IMPLEMENTED</RecQualityMode>",
+                )
+            }
+
+            "SetPlayMode" -> {
+                val mode = extractSoapValue(body, "NewPlayMode").orEmpty().ifBlank { "NORMAL" }
+                currentPlayMode = mode
+                AppLog.i(TAG, "SetPlayMode mode=$mode")
+                soapResponse("u:SetPlayModeResponse", "urn:schemas-upnp-org:service:AVTransport:1", "")
+            }
+
+            "GetCurrentTransportActions" -> {
+                val actions =
+                    when (currentTransportState) {
+                        "PLAYING" -> "Pause,Stop,Seek"
+                        "PAUSED_PLAYBACK" -> "Play,Stop,Seek"
+                        else -> "Play,Stop"
+                    }
+                soapResponse(
+                    "u:GetCurrentTransportActionsResponse",
+                    "urn:schemas-upnp-org:service:AVTransport:1",
+                    "<Actions>$actions</Actions>",
+                )
             }
 
             else -> {
@@ -433,7 +638,11 @@ class DlnaCastReceiverService : Service() {
         }
     }
 
-    private fun handleRenderingAction(action: String, body: String): String {
+    private fun handleRenderingAction(
+        action: String,
+        body: String,
+        requesterId: String,
+    ): String {
         return when (action) {
             "GetVolume" -> {
                 soapResponse(
@@ -444,6 +653,10 @@ class DlnaCastReceiverService : Service() {
             }
 
             "SetVolume" -> {
+                if (!CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_DLNA, requesterId, reason = "SetVolume")) {
+                    AppLog.i(TAG, "ignore SetVolume from non-owner requester=$requesterId")
+                    return soapResponse("u:SetVolumeResponse", "urn:schemas-upnp-org:service:RenderingControl:1", "")
+                }
                 val volume = extractSoapValue(body, "DesiredVolume")?.toIntOrNull()?.coerceIn(0, 100)
                 if (volume != null) currentVolume = volume
                 AppLog.i(TAG, "SetVolume volume=${volume ?: -1}")
@@ -465,14 +678,18 @@ class DlnaCastReceiverService : Service() {
         }
     }
 
-    private fun handleConnectionAction(action: String): String {
+    private fun handleConnectionAction(
+        action: String,
+        requesterId: String,
+    ): String {
+        CastSessionCoordinator.tryAcquireOrTouch(PROTOCOL_DLNA, requesterId, reason = "Connection:$action")
         return when (action) {
             "GetProtocolInfo" -> {
                 soapResponse(
                     "u:GetProtocolInfoResponse",
                     "urn:schemas-upnp-org:service:ConnectionManager:1",
                     "<Source></Source>" +
-                        "<Sink>http-get:*:*:*,rtsp-rtp-udp:*:*:*,rtsp-rtp-udp:*:video/mp4:*</Sink>",
+                        "<Sink>http-get:*:video/mp4:*,http-get:*:video/mpeg:*,http-get:*:video/x-matroska:*,http-get:*:application/vnd.apple.mpegurl:*,http-get:*:audio/mpeg:*,http-get:*:audio/mp4:*,rtsp-rtp-udp:*:*:*</Sink>",
                 )
             }
 
@@ -657,21 +874,95 @@ class DlnaCastReceiverService : Service() {
 
     private fun findLocalIpv4Address(peerAddress: InetAddress?): String? {
         val peer = peerAddress?.hostAddress?.takeIf { !it.contains(':') }
-        return runCatching {
-            val all =
-                Collections.list(NetworkInterface.getNetworkInterfaces())
-                    .filter { it.isUp && !it.isLoopback }
-                    .flatMap { Collections.list(it.inetAddresses) }
-                    .mapNotNull { addr ->
-                        val host = addr.hostAddress?.trim().orEmpty()
-                        if (host.isBlank() || host.contains(':') || addr.isLoopbackAddress) null else host
-                    }
-            if (peer != null) {
-                all.firstOrNull { isSameSubnet24(it, peer) } ?: all.firstOrNull()
-            } else {
-                all.firstOrNull()
+        val candidates = collectLocalIpv4Candidates()
+        if (candidates.isEmpty()) return null
+        return if (peer != null) {
+            candidates.firstOrNull { isSameSubnet24(it, peer) } ?: candidates.firstOrNull()
+        } else {
+            candidates.firstOrNull()
+        }
+    }
+
+    private fun collectLocalIpv4Candidates(): List<String> {
+        val preferred = mutableListOf<String>()
+        val fallback = mutableListOf<String>()
+
+        runCatching {
+            val cm = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val active = cm?.activeNetwork
+            val linkProps: LinkProperties? = if (active != null) cm?.getLinkProperties(active) else null
+            val activeV4 =
+                linkProps?.linkAddresses
+                    ?.mapNotNull { it.address?.hostAddress?.trim() }
+                    ?.firstOrNull { isUsableIpv4(it) }
+            if (!activeV4.isNullOrBlank()) {
+                preferred += activeV4
             }
-        }.getOrNull()
+        }
+
+        runCatching {
+            val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+            val ordered = interfaces.sortedWith(compareByDescending<NetworkInterface> { isPreferredInterfaceName(it.name) })
+            for (itf in ordered) {
+                if (!itf.isUp || itf.isLoopback) continue
+                val hosts =
+                    Collections.list(itf.inetAddresses)
+                        .mapNotNull { addr -> addr.hostAddress?.trim() }
+                        .filter { isUsableIpv4(it) }
+                if (hosts.isEmpty()) continue
+                if (isPreferredInterfaceName(itf.name)) {
+                    preferred += hosts
+                } else {
+                    fallback += hosts
+                }
+            }
+        }
+
+        return (preferred + fallback).distinct()
+    }
+
+    private fun joinSsdpGroupOnAvailableInterfaces(
+        socket: MulticastSocket,
+        group: InetAddress,
+    ): Boolean {
+        var joined = false
+        val interfaces =
+            runCatching { Collections.list(NetworkInterface.getNetworkInterfaces()) }
+                .getOrNull()
+                .orEmpty()
+                .filter { it.isUp && !it.isLoopback && it.supportsMulticast() }
+                .sortedWith(compareByDescending<NetworkInterface> { isPreferredInterfaceName(it.name) })
+
+        for (itf in interfaces) {
+            runCatching {
+                socket.joinGroup(InetSocketAddress(group, SSDP_PORT), itf)
+            }.onSuccess {
+                joined = true
+                AppLog.i(TAG, "joined ssdp group iface=${itf.name}")
+            }
+        }
+
+        if (joined) return true
+
+        runCatching { socket.joinGroup(group) }
+            .onSuccess {
+                joined = true
+                AppLog.i(TAG, "joined ssdp group legacy")
+            }
+            .onFailure { AppLog.w(TAG, "join ssdp group legacy failed", it) }
+
+        return joined
+    }
+
+    private fun isUsableIpv4(host: String): Boolean {
+        if (host.isBlank() || host.contains(':')) return false
+        if (host.startsWith("127.")) return false
+        return true
+    }
+
+    private fun isPreferredInterfaceName(name: String?): Boolean {
+        val n = name?.lowercase(Locale.US).orEmpty()
+        return n.startsWith("wlan") || n.startsWith("eth") || n.startsWith("en")
     }
 
     private fun parseHttpHeaders(request: String): Map<String, String> {
@@ -690,34 +981,46 @@ class DlnaCastReceiverService : Service() {
         return map
     }
 
-    private fun readHeaders(reader: BufferedReader): Map<String, String> {
-        val map = LinkedHashMap<String, String>()
-        while (true) {
-            val line = reader.readLine() ?: break
-            if (line.isBlank()) break
-            val idx = line.indexOf(':')
-            if (idx <= 0) continue
-            val name = line.substring(0, idx).trim().lowercase(Locale.US)
-            val value = line.substring(idx + 1).trim()
-            map[name] = value
-        }
-        return map
+    private fun buildRequesterId(client: Socket): String {
+        val host = client.inetAddress?.hostAddress?.trim().orEmpty()
+        return if (host.isNotBlank()) "ip:$host" else "ip:unknown"
+    }
+
+    private fun summarizeHeader(value: String?): String {
+        val v = value?.trim().orEmpty()
+        if (v.isBlank()) return "-"
+        return if (v.length <= 96) v else "${v.take(96)}..."
     }
 
     private fun writeHttpResponse(
-        writer: BufferedWriter,
+        output: BufferedOutputStream,
         status: String,
         body: String,
         contentType: String,
+        extraHeaders: Map<String, String> = emptyMap(),
     ) {
         val bytes = body.toByteArray(StandardCharsets.UTF_8)
-        writer.write("HTTP/1.1 $status\r\n")
-        writer.write("Content-Type: $contentType\r\n")
-        writer.write("Content-Length: ${bytes.size}\r\n")
-        writer.write("Connection: close\r\n")
-        writer.write("\r\n")
-        writer.write(body)
-        writer.flush()
+        val header =
+            buildString {
+                append("HTTP/1.1 $status\r\n")
+                append("Content-Type: $contentType\r\n")
+                append("Content-Length: ${bytes.size}\r\n")
+                append("Connection: close\r\n")
+                append("Server: Blbl-DLNA/${BuildConfig.VERSION_NAME}\r\n")
+                append("Date: ${httpDate()}\r\n")
+                for ((k, v) in extraHeaders) {
+                    append("$k: $v\r\n")
+                }
+                append("\r\n")
+            }
+        output.write(header.toByteArray(StandardCharsets.UTF_8))
+        output.write(bytes)
+        output.flush()
+    }
+
+    private fun writeServiceUnavailable(client: Socket) {
+        val output = BufferedOutputStream(client.getOutputStream())
+        writeHttpResponse(output, status = "503 Service Unavailable", body = "receiver busy", contentType = "text/plain")
     }
 
     private fun soapResponse(
@@ -866,6 +1169,7 @@ class DlnaCastReceiverService : Service() {
         }
 
         private const val TAG = "DlnaCastReceiver"
+        private const val PROTOCOL_DLNA = "dlna"
         private const val SSDP_HOST = "239.255.255.250"
         private const val SSDP_PORT = 1900
         private const val SSDP_MAX_AGE_SEC = 1800
@@ -881,6 +1185,9 @@ class DlnaCastReceiverService : Service() {
         private const val XML_CONTENT_TYPE = "text/xml; charset=\"utf-8\""
         private const val PREFS_NAME = "dlna_cast"
         private const val KEY_DEVICE_UUID = "device_uuid"
+        private const val HTTP_HEADER_MAX_BYTES = 16 * 1024
+        private const val HTTP_BODY_MAX_BYTES = 1024 * 1024
+        private const val MAX_ACTIVE_HTTP_CLIENTS = 48
 
         private val AV_TRANSPORT_SCPD_XML =
             """
@@ -897,6 +1204,10 @@ class DlnaCastReceiverService : Service() {
                 <action><name>GetMediaInfo</name></action>
                 <action><name>GetPositionInfo</name></action>
                 <action><name>Seek</name></action>
+                <action><name>GetDeviceCapabilities</name></action>
+                <action><name>GetTransportSettings</name></action>
+                <action><name>SetPlayMode</name></action>
+                <action><name>GetCurrentTransportActions</name></action>
               </actionList>
             </scpd>
             """.trimIndent()
